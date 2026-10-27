@@ -404,6 +404,7 @@ html.ai-on .ai-dot { opacity: 1; transform: scale(1); }
 .dist { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 9px 0 7px; margin-left: 8px; border-radius: 11px; vertical-align: middle; white-space: nowrap;
   font-size: 12px; font-weight: 650; color: #A5F4FF; background: rgba(0, 229, 255, .12); border: 1px solid rgba(0, 229, 255, .3); }
 .dist svg { width: 12px; height: 12px; }
+.pc-meta .dist { display: flex; width: fit-content; margin: 5px 0 0; }
 /* ---------- Nährwerte ---------- */
 .nw-card { padding: 14px 16px 12px; border-radius: var(--r-md); display: flex; flex-direction: column; gap: 10px; }
 .nw-seg button { min-height: 36px; font-size: 13px; padding: 0 6px; }

@@ -148,7 +148,8 @@ async function logoResponse(event) {
   try {
     return await network;
   } catch (err) {
-    return Response.error();
+    // CORS-Abruf gescheitert: Bild normal laden, aber nicht cachen
+    try { return await fetch(req); } catch { return Response.error(); }
   }
 }
 
