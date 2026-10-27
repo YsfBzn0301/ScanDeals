@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { lookupShopping, SerpError, cacheSeconds } from "./shopping.js";
 import { lookupPrices, fetchStoresList, OpeError, CACHE_TTL_S, CACHE_TTL_PARTIAL_S } from "./prices.js";
 
 const MAX_BODY_BYTES = 1.5 * 1024 * 1024;
@@ -189,6 +190,62 @@ export function createHandler(makeClient = defaultMakeClient, opts = {}) {
     return json(payload, 200, origin);
   }
 
+  function serpFailure(err, origin) {
+    if (err instanceof SerpError && err.kind === "auth") return json({ error: "SerpApi-Schlüssel ungültig" }, 502, origin);
+    if (err instanceof SerpError && err.kind === "rate") return json({ error: "Suchkontingent aufgebraucht" }, 429, origin);
+    return json({ error: "Preissuche momentan nicht erreichbar" }, 502, origin);
+  }
+
+  async function handleShopping(url, env, origin) {
+    const clean = (v) => String(v ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+    const q = clean(url.searchParams.get("q"));
+    const brand = clean(url.searchParams.get("brand"));
+    const qty = clean(url.searchParams.get("qty"));
+    const gtin = clean(url.searchParams.get("gtin")).replace(/\s+/g, "");
+    if (q ? q.length < 2 || q.length > 120 : !/^\d{8,14}$/.test(gtin)) return json({ error: "Suchbegriff fehlt oder ist ungültig" }, 400, origin);
+    if (gtin && !/^\d{8,14}$/.test(gtin)) return json({ error: "Ungültige Anfrage" }, 400, origin);
+    if (brand.length > 60 || qty.length > 60) return json({ error: "Ungültige Anfrage" }, 400, origin);
+    const query = q ? { q, brand, qty, gtin: "" } : { q: "", brand: "", qty: "", gtin };
+
+    let cache = null;
+    let cacheKey = null;
+    try {
+      cache = getCache();
+      const norm = [query.q, query.brand, query.qty, query.gtin].map((v) => v.toLowerCase());
+      cacheKey = new Request("https://scandeals-cache.invalid/shopping?k=" + encodeURIComponent(norm.join("|")));
+      const hit = cache && (await cache.match(cacheKey));
+      if (hit) return json(await hit.json(), 200, origin);
+    } catch {
+      /* Cache ist optional */
+    }
+
+    let out;
+    try {
+      out = await lookupShopping(fetchFn, env, query);
+    } catch (err) {
+      return serpFailure(err, origin);
+    }
+    const payload = {
+      query: { q: query.q, brand: query.brand, qty: query.qty, gtin: query.gtin },
+      fetched_at: new Date().toISOString(),
+      results: out.results,
+      provider: "google_shopping",
+    };
+    if (cache && cacheKey) {
+      try {
+        await cache.put(
+          cacheKey,
+          new Response(JSON.stringify(payload), {
+            headers: { "Content-Type": "application/json", "Cache-Control": `public, s-maxage=${cacheSeconds(env)}` },
+          }),
+        );
+      } catch {
+        /* ignorieren */
+      }
+    }
+    return json(payload, 200, origin);
+  }
+
   return async function handle(request, env) {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin");
@@ -208,7 +265,7 @@ export function createHandler(makeClient = defaultMakeClient, opts = {}) {
           ok: true,
           model: env.MODEL || "claude-opus-5-5",
           configured: Boolean(env.ANTHROPIC_API_KEY),
-          features: { ai: Boolean(env.ANTHROPIC_API_KEY), prices: Boolean(env.OPE_API_KEY) },
+          features: { ai: Boolean(env.ANTHROPIC_API_KEY), prices: Boolean(env.OPE_API_KEY), shopping: Boolean(env.SERPAPI_KEY) },
         },
         200,
         allowed,
@@ -226,6 +283,15 @@ export function createHandler(makeClient = defaultMakeClient, opts = {}) {
       if (rateLimited(ip)) return json({ error: "Zu viele Anfragen, bitte kurz warten" }, 429, allowed);
       if (!env.OPE_API_KEY) return json({ error: "Tagespreise sind nicht eingerichtet" }, 503, allowed);
       return url.pathname === "/prices/stores" ? handleStores(env, allowed) : handlePrices(url, env, allowed);
+    }
+
+    if (url.pathname === "/shopping") {
+      if (request.method !== "GET") return json({ error: "Methode nicht erlaubt" }, 405, allowed);
+      if (!allowed && env.OPE_DEBUG !== "true" && env.DEBUG !== "true") return json({ error: "Origin nicht erlaubt" }, 403, null);
+      const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+      if (rateLimited(ip)) return json({ error: "Zu viele Anfragen, bitte kurz warten" }, 429, allowed);
+      if (!env.SERPAPI_KEY) return json({ error: "Echtzeitpreise sind nicht eingerichtet" }, 503, allowed);
+      return handleShopping(url, env, allowed);
     }
 
     if (url.pathname === "/identify") {

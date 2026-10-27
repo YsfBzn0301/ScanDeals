@@ -610,6 +610,7 @@ export async function getServerHealth(endpoint, { force = false, timeout = 8000 
     configured: d ? d.configured : undefined,
     ai: f.ai !== undefined ? !!f.ai : !!(d && d.ok && d.configured !== false),
     prices: !!f.prices,
+    shopping: !!f.shopping,
   };
   if (data.ok) {
     try { sessionStorage.setItem(HEALTH_KEY, JSON.stringify({ ep: endpoint, ts: Date.now(), data })); } catch { /* ignorieren */ }
@@ -625,7 +626,9 @@ export async function getDailyPrices(endpoint, { q, brand, qty } = {}, { signal,
   const data = await fetchJson(`${endpoint}/prices?${params}`, timeout, signal);
   if (!data || typeof data !== 'object' || !Array.isArray(data.results)) throw new Error('Ungültige Antwort');
   return data.results.map((r) => ({
+    source: 'ope',
     store: String(r.store || '').slice(0, 80),
+    oldPrice: null, thumbnail: '', delivery: '', pack: 0,
     storeSlug: String(r.store_slug || ''),
     productName: String(r.product_name || '').slice(0, 200),
     price: Number(r.price),
@@ -635,6 +638,40 @@ export async function getDailyPrices(endpoint, { q, brand, qty } = {}, { signal,
     score: Number(r.score),
     sameSize: r.same_size === true ? true : r.same_size === false ? false : null,
   })).filter((r) => r.store && isFinite(r.price) && r.price > 0).sort((a, b) => a.price - b.price);
+}
+
+/** Echtzeitpreise aus Google Shopping (SerpApi über den eigenen Server): GET {endpoint}/shopping. */
+export async function getShoppingPrices(endpoint, { q, brand, qty, gtin } = {}, { signal, timeout = 20000 } = {}) {
+  const params = new URLSearchParams();
+  if (q) params.set('q', String(q));
+  if (brand) params.set('brand', String(brand));
+  if (qty) params.set('qty', String(qty));
+  if (gtin) params.set('gtin', String(gtin));
+  const data = await fetchJson(`${endpoint}/shopping?${params}`, timeout, signal);
+  if (!data || typeof data !== 'object' || !Array.isArray(data.results)) throw new Error('Ungültige Antwort');
+  const num = (v) => (v === null || v === undefined || v === '' ? NaN : Number(v));
+  return data.results.map((r) => {
+    const old = num(r.old_price);
+    const pack = Math.floor(num(r.pack));
+    const score = num(r.score);
+    const rating = num(r.rating);
+    return {
+      source: 'google',
+      store: String(r.source || '').slice(0, 80),
+      productName: String(r.title || '').slice(0, 200),
+      price: num(r.price),
+      oldPrice: isFinite(old) && old > 0 ? old : null,
+      currency: /^[A-Z]{3}$/.test(r.currency || '') ? r.currency : 'EUR',
+      url: /^https?:\/\//i.test(r.url || '') ? r.url : '',
+      thumbnail: safeHttps(r.thumbnail),
+      delivery: String(r.delivery || '').slice(0, 80),
+      rating: isFinite(rating) && rating > 0 ? rating : null,
+      score: isFinite(score) ? score : null,
+      sameSize: r.same_size === true ? true : r.same_size === false ? false : null,
+      pack: pack > 1 ? pack : 0,
+      date: '',
+    };
+  }).filter((r) => r.store && isFinite(r.price) && r.price > 0).sort((a, b) => a.price - b.price);
 }
 
 /** Händler-Logo wie bei Open Prices (Open-Food-Facts-Markenbilder); Slug = Name klein, ohne Umlaut-Akzente, sonst '-'. */

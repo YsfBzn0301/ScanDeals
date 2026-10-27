@@ -47,7 +47,10 @@ Im Sucher lässt sich zwischen drei Erkennungsmodi wählen:
 
 Beide Datenbanken sind frei verfügbar und stehen unter der **Open Database License (ODbL)**. Die Preisdaten stammen von Nutzerinnen und Nutzern, ScanDeals ist nicht mit Open Food Facts oder Open Prices verbunden. Keine API-Schlüssel nötig.
 
-- **Open Price Engine** (optional, kostenpflichtig): tagesaktuelle Onlineshop-Preise u. a. von Aldi Süd, Lidl, Globus und Alnatura im Abschnitt „Tagesaktuell im Onlineshop“. Läuft nur über den eigenen ScanDeals-Server (Cloudflare Worker) mit eigenem API-Schlüssel – Einrichtung siehe [worker/README.md](./worker/README.md). Abgleich nur über den Produktnamen (keine Barcode-Suche), daher kennzeichnet die App „gleiche Größe“, „andere Größe“ oder „ähnliches Produkt“.
+- **Google Shopping über SerpApi** (optional, Kontingent/kostenpflichtig): Echtzeitpreise von Händlern wie Amazon, MediaMarkt oder Otto, besonders nützlich für Technik und bei unbekannten Barcodes (Suche per GTIN). Läuft nur über den eigenen ScanDeals-Server (Cloudflare Worker, Endpunkt `/shopping`) mit eigenem SerpApi-Schlüssel – Einrichtung und Kontingent-Hinweise siehe [worker/README.md](./worker/README.md). Erscheint zusammen mit der Open Price Engine im Abschnitt „Tagesaktuell online“, Mehrfachpackungen werden mit „6er-Pack“ gekennzeichnet.
+- **Open Price Engine** (optional, kostenpflichtig): tagesaktuelle Onlineshop-Preise u. a. von Aldi Süd, Lidl, Globus und Alnatura im Abschnitt „Tagesaktuell online“. Läuft nur über den eigenen ScanDeals-Server (Cloudflare Worker) mit eigenem API-Schlüssel – Einrichtung siehe [worker/README.md](./worker/README.md). Abgleich nur über den Produktnamen (keine Barcode-Suche), daher kennzeichnet die App „gleiche Größe“, „andere Größe“ oder „ähnliches Produkt“.
+
+Welche Quellen aktiv sind, zeigt die App unter **Einstellungen** (Chips „Tagespreise“ und „Echtzeitpreise“). Bei einem Barcode, der in Open Food Facts fehlt, sucht die App per GTIN in Google Shopping; die Textsuche ohne Treffer zeigt „Online gefunden“.
 
 ## Projektstruktur
 
@@ -55,7 +58,7 @@ Beide Datenbanken sind frei verfügbar und stehen unter der **Open Database Lice
 index.html          Oberfläche (Seite, Sucher, Bottom-Sheet)
 styles.css          Design, Dark Mode
 manifest.webmanifest  PWA-Manifest
-sw.js               Service Worker (Offline-Cache, Cache-Name scandeals-v3)
+sw.js               Service Worker (Offline-Cache, Cache-Name scandeals-v9)
 js/app.js           Routing, Suche, Produktansicht, Einstellungen
 js/api.js           Datenzugriff (Open Food Facts / Open Prices)
 js/scanner.js       Kamera und Barcode-Erkennung

@@ -401,9 +401,9 @@ test("CORS: /prices ohne Origin nur im Debug-Modus, fremder Origin 403, OPTIONS 
 test("/health features", async () => {
   const h = createHandler(undefined, { cache: null });
   const a = await (await h(req("/health"), { ...ENV, ANTHROPIC_API_KEY: "k" })).json();
-  assert.deepEqual(a.features, { ai: true, prices: true });
+  assert.deepEqual(a.features, { ai: true, prices: true, shopping: false });
   const b = await (await h(req("/health"), { ...ENV, OPE_API_KEY: undefined })).json();
-  assert.deepEqual(b.features, { ai: false, prices: false });
+  assert.deepEqual(b.features, { ai: false, prices: false, shopping: false });
   assert.ok(!JSON.stringify(a).includes("ope-secret-key"));
 });
 

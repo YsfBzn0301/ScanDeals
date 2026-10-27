@@ -64,6 +64,24 @@ Hinweise:
 - Optional: `OPE_BASE` ändert die API-Basisadresse (Standard `https://openpricengine.com/api/v1`).
 - `/prices/stores` funktioniert auch direkt im Browser. `/prices` verbraucht dein Kontingent und antwortet deshalb nur der App (erlaubte Origins) – außer im Debug-Modus. Beide unterliegen demselben Rate-Limit wie `/identify`.
 
+## Echtzeitpreise (SerpApi / Google Shopping)
+
+Optional liefert der Worker tagesaktuelle Preise aus Google Shopping über [SerpApi](https://serpapi.com). Ohne Key antwortet `/shopping` mit 503, alles andere bleibt unverändert.
+
+1. Konto auf <https://serpapi.com> anlegen und den API-Key aus dem Dashboard kopieren.
+2. Key als Secret speichern und deployen:
+   ```bash
+   npx wrangler secret put SERPAPI_KEY
+   npx wrangler deploy
+   ```
+3. Test im Debug-Modus (`OPE_DEBUG = "true"` setzen, deployen, danach wieder entfernen): `https://<worker>/shopping?q=monster%20energy%20ultra&qty=0,5%20l`
+
+Hinweise:
+- **Kontingent:** Der Gratis-Tarif umfasst laut Stand 2026 ca. 250 Suchen pro Monat (bitte auf <https://serpapi.com/pricing> prüfen). Jede erfolgreiche Suche zählt. Behalte Verbrauch und Plan im SerpApi-Dashboard im Blick.
+- **Cache:** Antworten (auch leere Listen) werden standardmäßig 12 Stunden im Cloudflare-Cache gehalten und sparen so Suchen. Mit `SERP_CACHE_HOURS` änderbar; Fehler werden nicht gecacht. `SERP_LOCATION` (Standard `Germany`) steuert den Standort.
+- `GET /shopping?q=…&brand=…&qty=…` oder `GET /shopping?gtin=…` (8 bis 14 Ziffern). Pro Händler kommt nur das günstigste passende Angebot (max. 12, günstig zuerst). Nur Preise in EUR, Gebrauchtware wird verworfen. Mehrfachpackungen („24 x 0,5 l“, „6er Pack“) erkennt der Worker und liefert `pack` sowie `same_size: false`.
+- Wie `/prices` antwortet `/shopping` nur der App (erlaubte Origins), außer im Debug-Modus, und teilt sich das Rate-Limit.
+
 ## Erlaubte Webseiten (CORS) ändern
 
 Nur Seiten aus `ALLOWED_ORIGINS` dürfen den Worker nutzen. Standard in `wrangler.toml`:
@@ -92,8 +110,9 @@ Die automatischen Tests (ohne Netzwerk, ohne Key) startest du mit `npm test`.
 
 ## Schnittstellen
 
-- `GET /health` gibt `{ok, model, configured, features: {ai, prices}}` zurück.
+- `GET /health` gibt `{ok, model, configured, features: {ai, prices, shopping}}` zurück.
 - `GET /prices?q=…&brand=…&qty=…` liefert Tagespreise (siehe unten), `GET /prices/stores` die Läden-Liste der Open Price Engine.
+- `GET /shopping?q=…&brand=…&qty=…&gtin=…` liefert Google-Shopping-Preise (siehe oben).
 - `POST /identify` mit `{"image": "<Base64-JPEG ohne Präfix>", "hint": "mouse"}` gibt `{is_product, name, brand, model, category, confidence, search_query, barcode}` zurück. Fehler kommen als `{"error": "…"}` mit passendem Statuscode (400, 403, 413, 422, 429, 500, 502).
 
 ## Schutzmaßnahmen und Grenzen

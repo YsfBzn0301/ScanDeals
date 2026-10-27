@@ -5,9 +5,9 @@
 //   Open Food Facts / Open Prices (*.openfoodfacts.org): network-first, Fallback Cache
 //   Händler-Logos (raw.githubusercontent.com): stale-while-revalidate, nur 200er (404/Opaque nie gecacht)
 //   alles andere (z. B. CDN-Module, TF-Modellgewichte): stale-while-revalidate
-//   *.workers.dev (ScanDeals-Server: /identify, /health, /prices) und alle Nicht-GET-Requests: nie gecacht, direkt ans Netz
+//   *.workers.dev (ScanDeals-Server: /identify, /health, /prices, /shopping) und alle Nicht-GET-Requests: nie gecacht, direkt ans Netz
 
-const CACHE = 'scandeals-v8';
+const CACHE = 'scandeals-v9';
 
 const SHELL = [
   './',
@@ -183,7 +183,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   // ScanDeals-Server auf eigener Domain (nicht workers.dev): Tagespreise/Health/KI nie cachen
-  if (url.origin !== self.location.origin && /\/(prices|health|identify)(\/|$)/.test(url.pathname)) return;
+  if (url.origin !== self.location.origin && /\/(prices|shopping|health|identify)(\/|$)/.test(url.pathname)) return;
 
   // Externe Seitennavigationen (z. B. Google Maps, Shops) nicht abfangen
   if (req.mode === 'navigate') return;

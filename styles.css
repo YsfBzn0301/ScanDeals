@@ -564,3 +564,21 @@ a.dcard:active { transform: scale(.97); }
 .status-chip.busy i { animation: pulse-dot 1s ease-in-out infinite; }
 @keyframes pulse-dot { 50% { opacity: .3; } }
 @media (prefers-reduced-motion: reduce) { .status-chip.busy i { animation: none; } }
+
+/* ---------- Echtzeitpreise (Google Shopping) ---------- */
+.lg-tile.prod { width: 46px; height: 46px; border-radius: 14px; }
+.lg-tile.prod .lg-img { border-radius: 0; padding: 4px; }
+.dp-src { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; letter-spacing: .01em; }
+.src-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.src-dot.g { background: #4F9BFF; box-shadow: 0 0 8px rgba(79, 155, 255, .7); }
+.src-dot.o { background: var(--purple, #A855F7); box-shadow: 0 0 8px rgba(168, 85, 247, .7); }
+.dp-dl { font-size: 12.5px; color: var(--muted); line-height: 1.3; overflow-wrap: anywhere; }
+.badge.pack { background: rgba(79, 155, 255, .18); color: #BBD7FF; }
+.dcard .pc-r { flex-wrap: wrap; justify-content: flex-end; max-width: 46%; }
+.dcard .pc-r s { order: 3; flex-basis: 100%; text-align: right; }
+.dcard .pc-price { order: 1; }
+.dcard .dp-go { order: 2; }
+.dcard[hidden] { display: none; }
+.dp-all { margin-top: 12px; width: 100%; justify-content: center; min-height: 46px; gap: 8px; font-weight: 650; }
+.dp-all svg { width: 18px; height: 18px; }
+.ph-guess { margin-top: 6px; font-size: 13.5px; color: #8BF1FF; line-height: 1.35; overflow-wrap: anywhere; animation: liquid-in .45s var(--ease-out) backwards; }

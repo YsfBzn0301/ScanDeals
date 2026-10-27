@@ -216,11 +216,11 @@ export function parseDate(v) {
   return ms >= lo && ms <= hi ? ms : null;
 }
 
-function cut(v) {
+export function cut(v) {
   return typeof v === "string" ? v.trim().slice(0, MAX_STR) : "";
 }
 
-function httpUrl(v) {
+export function httpUrl(v) {
   if (typeof v !== "string") return "";
   const t = v.trim();
   if (t.length > 1000) return "";

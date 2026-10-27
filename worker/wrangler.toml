@@ -13,3 +13,7 @@ MODEL = "claude-opus-5-5"
 OPE_STORES = '[{"slug":"aldi_sud","name":"Aldi Süd"},{"slug":"lidl","name":"Lidl"},{"slug":"globus","name":"Globus"},{"slug":"alnatura","name":"Alnatura"}]'
 # Optional: OPE_BASE = "https://openpricengine.com/api/v1"
 # Optional: OPE_DEBUG = "true"  (erlaubt /prices?...&raw=1 mit den rohen Antworten)
+
+# Echtzeitpreise (SerpApi / Google Shopping). Secret setzen mit: npx wrangler secret put SERPAPI_KEY
+# Optional: SERP_CACHE_HOURS = "12"   (Cache-Dauer in Stunden, spart Suchen)
+# Optional: SERP_LOCATION = "Germany"
