@@ -475,7 +475,8 @@ function renderProduct(p, items, back, near = null, radius = 10) {
       else if (/^\d{8,14}$/.test(p.code)) {
         // Unbekanntes Produkt: per GTIN bei Google Shopping suchen, Titel des ersten Treffers als Namensvorschlag
         loadDaily(b, { gtin: p.code }, navToken, st, { shoppingOnly: true, onList: (list) => {
-          const t = (list.find((r) => r.source === 'google' && r.productName) || {}).productName;
+          const gs = list.filter((r) => r.source === 'google' && r.productName);
+          const t = (gs.find((r) => !(r.pack > 1)) || gs[0] || {}).productName;
           const box = $('.ph-t', h);
           if (t && box && !$('.ph-guess', box)) box.insertAdjacentHTML('beforeend', `<p class="ph-guess">Möglicherweise: ${esc(t)}</p>`);
         } });
