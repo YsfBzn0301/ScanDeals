@@ -214,11 +214,12 @@ function renderProduct(p, items, back) {
     all = aggregatePrices(items, { includeOld: true });
     best = current.rows[0] || null;
     const toolbar = `<div class="toolbar stagger" style="--i:1">
-      ${current.hiddenOld ? `<div class="seg" role="group" aria-label="Preise filtern">
+      ${current.hiddenOld ? `<div class="seg" role="group" aria-label="Preise filtern" data-mode="cur">
         <span class="seg-thumb" aria-hidden="true"></span>
         <button type="button" data-mode="cur" aria-pressed="true">Aktuell</button>
         <button type="button" data-mode="all" aria-pressed="false">Alle (inkl. älter)</button></div>` : ''}
-      <button class="chip geo" id="geo" type="button">${icon('i-pin')}<span>${userPos ? 'Standort aktiv' : 'Standort nutzen'}</span></button></div>`;
+      <div class="list-head"><h2 class="label">Händler${best ? ` · ${current.rows.length}` : ''}</h2>
+        <button class="chip geo" id="geo" type="button">${icon('i-pin')}<span>${userPos ? 'Standort aktiv' : 'Standort nutzen'}</span></button></div></div>`;
     if (best) {
       const rows = current.rows;
       const priciest = rows[rows.length - 1];
@@ -256,6 +257,7 @@ function wireProductBody(b, p, items, current, all, best) {
     btn.setAttribute('aria-expanded', String(open));
     haptic(8);
     if (open && getSnap() === 'half') snapTo('full');
+    if (open) setTimeout(() => card.scrollIntoView({ block: 'nearest', behavior: isReduced() ? 'auto' : 'smooth' }), 260);
   };
   // Segment: Aktuell | Alle
   const seg = $('.seg', b);
@@ -353,7 +355,8 @@ function setVf(state, extra) {
   vf.dataset.state = state;
   if (state === 'paused') $('#start-label').textContent = 'Erneut scannen';
   else if (state === 'idle') $('#start-label').textContent = 'Scannen starten';
-  $('#idle-title').textContent = state === 'paused' ? 'Bereit zum nächsten Scan' : 'Barcode scannen';
+  $('#idle-title').textContent = state === 'paused' ? 'Nächster Scan' : 'Barcode scannen';
+  $('#vf-hint').textContent = state === 'starting' ? 'Kamera wird gestartet …' : 'Barcode in den Rahmen halten';
   if (state === 'error') $('#vf-error-text').textContent = extra || 'Scan fehlgeschlagen.';
   if (state !== 'scanning') { torchOn = false; $('#torch-btn').hidden = true; $('#torch-btn').setAttribute('aria-pressed', 'false'); }
 }

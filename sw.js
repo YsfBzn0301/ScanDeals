@@ -1,11 +1,11 @@
-// PreisFuchs – Service Worker
+// ScanDeals – Service Worker
 // Strategien:
 //   App-Shell (index.html, styles.css, js/*, manifest, Icons): cache-first mit Hintergrund-Update
 //   Navigationen (offline): gecachte index.html
 //   Open Food Facts / Open Prices (*.openfoodfacts.org): network-first, Fallback Cache
 //   alles andere (z. B. CDN-Module): stale-while-revalidate
 
-const CACHE = 'preisfuchs-v1';
+const CACHE = 'scandeals-v2';
 
 const SHELL = [
   './',
@@ -14,7 +14,11 @@ const SHELL = [
   './js/app.js',
   './js/api.js',
   './js/scanner.js',
+  './js/motion.js',
+  './js/sheet.js',
+  './js/splash.js',
   './manifest.webmanifest',
+  './icons/logo.svg',
   './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',

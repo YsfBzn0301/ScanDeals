@@ -1,6 +1,43 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" rx="112" fill="#ff6a00"/>
-  <path d="M 110 176 Q 110 150 136 150 H 300 L 404 256 L 300 362 H 136 Q 110 362 110 336 Z" fill="#ffffff"/>
-  <circle cx="152" cy="256" r="20" fill="#ff6a00"/>
-  <text x="245" y="326" font-family="Arial, Helvetica, sans-serif" font-size="190" font-weight="700" text-anchor="middle" fill="#ff6a00">€</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="ScanDeals">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0D0F12"/>
+      <stop offset="1" stop-color="#161A22"/>
+    </linearGradient>
+    <radialGradient id="glow" gradientUnits="userSpaceOnUse" cx="256" cy="256" r="230">
+      <stop offset="0" stop-color="#00E5FF" stop-opacity=".22"/>
+      <stop offset=".5" stop-color="#A855F7" stop-opacity=".12"/>
+      <stop offset="1" stop-color="#A855F7" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="tile">
+      <rect width="512" height="512" rx="113"/>
+    </clipPath>
+    <linearGradient id="sdg" gradientUnits="userSpaceOnUse" x1="70" y1="60" x2="450" y2="460">
+      <stop offset="0" stop-color="#00E5FF"/>
+      <stop offset="1" stop-color="#A855F7"/>
+    </linearGradient>
+    <linearGradient id="sdglass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".24"/>
+      <stop offset="1" stop-color="#fff" stop-opacity=".04"/>
+    </linearGradient>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="512" height="512" fill="url(#bg)"/>
+    <rect width="512" height="512" fill="url(#glow)"/>
+  </g>
+  <rect x="1" y="1" width="510" height="510" rx="112" fill="none" stroke="#fff" stroke-opacity=".12" stroke-width="2"/>
+  <g transform="translate(256 256) scale(0.815) translate(-258 -263.5)">
+    <path d="M322 344 438 460" stroke="url(#sdg)" stroke-width="46" stroke-linecap="round" fill="none"/>
+    <circle cx="214" cy="236" r="148" fill="url(#sdglass)" stroke="url(#sdg)" stroke-width="22"/>
+    <path d="M112 196a110 110 0 0 1 78-72" stroke="#fff" stroke-opacity=".6" stroke-width="10" stroke-linecap="round" fill="none"/>
+    <g fill="url(#sdg)">
+      <rect x="148" y="176" width="10" height="120" rx="3"/>
+      <rect x="168" y="176" width="20" height="120" rx="3"/>
+      <rect x="198" y="176" width="8" height="120" rx="3"/>
+      <rect x="216" y="176" width="16" height="120" rx="3"/>
+      <rect x="242" y="176" width="8" height="120" rx="3"/>
+      <rect x="260" y="176" width="22" height="120" rx="3"/>
+    </g>
+    <path d="M396 44Q403 97 456 104Q403 111 396 164Q389 111 336 104Q389 97 396 44Z" fill="url(#sdg)"/>
+  </g>
 </svg>

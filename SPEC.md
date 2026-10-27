@@ -1,4 +1,4 @@
-# PreisFuchs – PWA Preisvergleich (Spezifikation)
+# ScanDeals – PWA Preisvergleich (Spezifikation)
 
 Sprache der UI: Deutsch. Reines Vanilla-JS (ES Modules), kein Build-Schritt. Statisch hostbar (z. B. GitHub Pages) – alle Pfade RELATIV (`./`).
 
@@ -11,7 +11,7 @@ Sprache der UI: Deutsch. Reines Vanilla-JS (ES Modules), kein Build-Schritt. Sta
 ## Verträge zwischen den Teilen
 - index.html bindet ein: `<link rel="manifest" href="./manifest.webmanifest">`, `<meta name="theme-color" content="#ff6a00">`, `<link rel="icon" href="./icons/icon.svg">`, `<link rel="apple-touch-icon" href="./icons/icon-192.png">`, `styles.css`, `<script type="module" src="./js/app.js">`.
 - app.js registriert `./sw.js` (`navigator.serviceWorker.register('./sw.js')`).
-- sw.js: App-Shell cachen (index.html, styles.css, js/app.js, js/api.js, js/scanner.js, manifest, icons). Strategie: Shell = cache-first mit Hintergrund-Update; API-Anfragen an `*.openfoodfacts.org` = network-first, Fallback Cache; alles andere (CDN) = stale-while-revalidate. Cache-Name versioniert `preisfuchs-v1`, alte Caches bei activate löschen.
+- sw.js: App-Shell cachen (index.html, styles.css, js/app.js, js/api.js, js/scanner.js, manifest, icons). Strategie: Shell = cache-first mit Hintergrund-Update; API-Anfragen an `*.openfoodfacts.org` = network-first, Fallback Cache; alles andere (CDN) = stale-while-revalidate. Cache-Name versioniert `scandeals-v2`, alte Caches bei activate löschen.
 - Icons: icons/icon.svg, icons/icon-192.png, icons/icon-512.png, icons/maskable-512.png. Farbe #ff6a00 (Fuchs/Preisschild-Motiv).
 
 ## Datenquellen (alle kostenlos, CORS-fähig, kein API-Key)
@@ -34,7 +34,7 @@ Sprache der UI: Deutsch. Reines Vanilla-JS (ES Modules), kein Build-Schritt. Sta
 - Keine Preise vorhanden → freundlicher Hinweis + Online-Links + Link "Preis selbst melden" (`https://prices.openfoodfacts.org/prices/add/single?code={code}`).
 
 ## UI
-- Mobile-first, Header "PreisFuchs", Suchfeld + "Suchen"-Button + großer "Scannen"-Button (Kamera-Icon).
+- Mobile-first, Header "ScanDeals", Suchfeld + "Suchen"-Button + großer "Scannen"-Button (Kamera-Icon).
 - Freitextsuche → Ergebnisliste Produkte (Bild, Name, Marke, Menge) → Klick → Preisansicht. Eingabe nur aus Ziffern (8–14) = Barcode direkt.
 - Scanner: Vollbild-Overlay mit Video, Zielrahmen, Abbrechen; native `BarcodeDetector` (ean_13, ean_8, upc_a, upc_e) sonst Fallback ZXing per dynamic import von `https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm`. Rückkamera (`facingMode: environment`). Fehlermeldung bei verweigerter Kamera. Kamera nach Treffer sofort stoppen, Vibration 100ms.
 - Verlauf der letzten 10 Produkte in localStorage (try/catch), auf Startseite anklickbar.

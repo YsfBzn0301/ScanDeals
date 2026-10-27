@@ -1,4 +1,4 @@
-// PreisFuchs – Datenzugriff und reine Hilfsfunktionen
+// ScanDeals – Datenzugriff und reine Hilfsfunktionen
 export const OFF_FIELDS = 'code,product_name,product_name_de,brands,quantity,image_front_small_url';
 export const PRODUCT_HOSTS = [
   'https://world.openfoodfacts.org',

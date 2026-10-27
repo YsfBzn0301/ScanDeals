@@ -1,13 +1,13 @@
 {
-  "name": "PreisFuchs – Preisvergleich",
-  "short_name": "PreisFuchs",
-  "description": "Preise für Lebensmittel und Produkte finden und vergleichen – Community-Preise aus Open Prices und Open Food Facts.",
+  "name": "ScanDeals – Preise scannen & vergleichen",
+  "short_name": "ScanDeals",
+  "description": "Preise für Lebensmittel und Produkte scannen, finden und vergleichen – Community-Preise aus Open Prices und Open Food Facts.",
   "lang": "de",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "theme_color": "#ff6a00",
-  "background_color": "#ffffff",
+  "theme_color": "#0D0F12",
+  "background_color": "#0D0F12",
   "categories": ["shopping"],
   "icons": [
     {

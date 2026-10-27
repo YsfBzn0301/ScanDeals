@@ -41,6 +41,7 @@
       </g>
       <path d="M396 44Q403 97 456 104Q403 111 396 164Q389 111 336 104Q389 97 396 44Z" fill="url(#sdg)"/>
     </symbol>
+    <symbol id="corner" viewBox="0 0 40 40"><path d="M3 38V15a12 12 0 0 1 12-12h23" fill="none" style="stroke:var(--cs, url(#sdg-bb))" stroke-width="4" stroke-linecap="round"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></g></symbol>
     <symbol id="i-clock" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/></g></symbol>
     <symbol id="i-torch" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 5 13.5h6L10 22l9-12h-6.2z"/></g></symbol>
@@ -92,9 +93,10 @@
         </div>
 
         <div class="vf-live" aria-hidden="true">
-          <svg class="corners" viewBox="0 0 100 100" preserveAspectRatio="none">
-            <path d="M3 20V9a6 6 0 0 1 6-6h11M80 3h11a6 6 0 0 1 6 6v11M97 80v11a6 6 0 0 1-6 6H80M20 97H9a6 6 0 0 1-6-6V80" fill="none" stroke="url(#sdg-bb)" stroke-width="1.1" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
-          </svg>
+          <div class="corners">
+            <svg class="c tl"><use href="#corner"/></svg><svg class="c tr"><use href="#corner"/></svg>
+            <svg class="c br"><use href="#corner"/></svg><svg class="c bl"><use href="#corner"/></svg>
+          </div>
           <div class="scan-track"><div class="scanline"></div></div>
           <div class="flash"></div>
         </div>
