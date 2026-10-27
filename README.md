@@ -10,7 +10,7 @@ ScanDeals ist eine installierbare Web-App (PWA), mit der du Preise für Lebensmi
 - **Produkt per Barcode finden:** Barcode mit der Kamera scannen (EAN/UPC) oder die Ziffern direkt eingeben.
 - **KI-Produkterkennung:** Ein Produkt vor die Kamera halten, statt einen Barcode zu scannen (siehe unten).
 - **Live-Scanner im Sucher:** Die Kamera läuft direkt im Sucher; Barcodes werden erkannt, sobald sie im Bild sind. Mit der Taschenlampe-Taste lässt sich das Licht bei schlechten Lichtverhältnissen zuschalten (sofern das Gerät es unterstützt).
-- **Produkt per Name suchen:** Freitextsuche mit Ergebnisliste (Bild, Name, Marke, Menge).
+- **Produkt per Name suchen:** Freitextsuche mit Ergebnisliste (Bild, Name, Marke, Menge). Standardmäßig zeigt die Suche nur Produkte, zu denen in Open Prices mindestens ein Preis gemeldet wurde (mit „ab X €“, Anzahl der Preise und Datum der neuesten Meldung); der Schalter „Nur mit Preis“ blendet zusätzlich Treffer ohne Preis ein. Die Wahl bleibt auf dem Gerät gespeichert.
 - **Preise vergleichen:** Pro Händler der neueste Preis, sortiert von günstig nach teuer, mit Bestpreis-Markierung. Angebote zeigen den durchgestrichenen Normalpreis. Meldungen älter als 12 Monate sind standardmäßig ausgeblendet. Als Duplikat markierte Preise werden ausgeblendet.
 - **Händler-Logos:** Pro Händler ein rundes Logo (Open-Prices-Markenbild, falls vorhanden), sonst eine Initial-Kachel; Online-Shops mit Globus-Symbol.
 - **Preise in der Nähe:** Nach „Standort nutzen“ zeigt jede Karte die Entfernung. Der Schalter „Überall | In der Nähe“ begrenzt die Liste auf Läden im Umkreis von 5, 10 oder 25 km (Auswahl wird gemerkt); Online-Preise erscheinen nur bei „Überall“. Der Standort bleibt nur im Arbeitsspeicher.

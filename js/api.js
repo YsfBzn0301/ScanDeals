@@ -373,6 +373,167 @@ export async function searchProducts(q) {
   return ((data && data.products) || []).map(normalizeProduct).filter(Boolean);
 }
 
+// ---------- Suche nur mit Preis (Open Prices + Open Food Facts) ----------
+export const PRODUCTS_URL = 'https://prices.openfoodfacts.org/api/v1/products';
+const SEARCH_CODE_LIMIT = 20;
+
+/** Kleinschreibung, Umlaute (ä→ae, ö→oe, ü→ue, ß→ss), übrige Akzente entfernt. */
+export function normText(s) {
+  return String(s ?? '').toLowerCase()
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+/** Suchwörter (normalisiert, ohne Sonderzeichen). */
+export function searchWords(q) {
+  return normText(q).split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+/** Längstes Suchwort (bei Gleichstand das erste); '' wenn keins. */
+export function longestWord(words) {
+  return (words || []).reduce((a, w) => (w.length > a.length ? w : a), '');
+}
+
+/** Enthält der Text (Name + Marke) alle Suchwörter? Ohne Wörter: true. */
+export function matchesAllWords(text, words) {
+  const t = normText(text);
+  return (words || []).every((w) => t.includes(w));
+}
+
+/** Open-Prices-Produkt → App-Produkt (mit priceCount); null ohne Barcode. */
+export function normalizePriceProduct(p) {
+  if (!p || !p.code) return null;
+  const unit = String(p.product_quantity_unit || '').trim();
+  const qn = Number(p.product_quantity);
+  const qty = p.product_quantity != null && p.product_quantity !== '' && isFinite(qn) && qn > 0
+    ? `${String(Math.round(qn * 100) / 100).replace('.', ',')} ${unit || 'g'}` : '';
+  return {
+    code: String(p.code),
+    name: String(p.product_name || '').trim(),
+    brand: String(p.brands || '').split(',')[0].trim(),
+    quantity: qty,
+    image: safeHttps(p.image_url),
+    priceCount: Math.max(0, Math.floor(Number(p.price_count) || 0)),
+  };
+}
+
+/**
+ * Preise je Barcode zusammenfassen: günstigster Preis der letzten 12 Monate
+ * (sonst günstigster überhaupt mit old=true), Anzahl, Datum der neuesten Meldung.
+ * Bevorzugt EUR-Preise. Rückgabe: Map code → {min, currency, old, count, latest}
+ */
+export function summarizePrices(items, now = new Date()) {
+  const limit = monthsAgo(now, MAX_AGE_MONTHS).getTime();
+  const by = new Map();
+  for (const it of dropDuplicates(items)) {
+    const price = Number(it.price);
+    const code = it.product_code != null ? String(it.product_code) : '';
+    if (!code || it.price === null || it.price === '' || it.price === undefined || !isFinite(price)) continue;
+    if (!by.has(code)) by.set(code, []);
+    by.get(code).push({ price, cur: it.currency || 'EUR', ts: Date.parse(it.date) || 0, date: it.date || '' });
+  }
+  const out = new Map();
+  for (const [code, list] of by) {
+    const pool = list.some((x) => x.cur === 'EUR') ? list.filter((x) => x.cur === 'EUR') : list;
+    const recent = pool.filter((x) => x.ts >= limit);
+    const src = recent.length ? recent : pool;
+    const best = src.reduce((a, x) => (x.price < a.price ? x : a));
+    const latest = list.reduce((a, x) => (x.ts > a.ts ? x : a));
+    out.set(code, { min: best.price, currency: best.cur, old: !recent.length, count: list.length, latest: latest.date });
+  }
+  return out;
+}
+
+/**
+ * Open-Prices-Treffer (a) und Open-Food-Facts-Treffer (b) per Barcode zusammenführen.
+ * priced = Set der OFF-Codes mit Preis, summaries = Map aus summarizePrices;
+ * priceDown: Preisprüfung der OFF-Treffer fehlgeschlagen → OFF-Treffer mit hasPrice=null (unbekannt).
+ * Sortierung: Relevanz (alle Suchwörter in Name/Marke), dann Preisanzahl absteigend; Treffer ohne Preis ans Ende.
+ */
+export function mergeSearchResults({ op = [], off = [], priced = new Set(), summaries = new Map(), words = [], priceDown = false } = {}) {
+  const map = new Map();
+  const order = [];
+  for (const p of op) {
+    if (!p || !p.code || map.has(p.code)) continue;
+    map.set(p.code, { code: p.code, name: p.name, brand: p.brand, quantity: p.quantity, image: p.image, priceCount: p.priceCount, hasPrice: true, nutrition: null });
+    order.push(p.code);
+  }
+  for (const p of off) {
+    if (!p || !p.code) continue;
+    const cur = map.get(p.code);
+    if (cur) {
+      cur.name = cur.name || (p.name !== 'Unbenanntes Produkt' ? p.name : '');
+      cur.brand = cur.brand || p.brand;
+      cur.quantity = cur.quantity || p.quantity;
+      cur.image = cur.image || safeHttps(p.image);
+      continue;
+    }
+    map.set(p.code, { code: p.code, name: p.name, brand: p.brand, quantity: p.quantity, image: safeHttps(p.image), priceCount: 0, hasPrice: priceDown ? null : priced.has(p.code), nutrition: null });
+    order.push(p.code);
+  }
+  const items = order.map((code, idx) => {
+    const it = map.get(code);
+    const s = summaries.get(code);
+    if (s) {
+      it.min = s.min; it.currency = s.currency; it.old = s.old; it.latest = s.latest;
+      it.priceCount = Math.max(it.priceCount, s.count);
+      if (it.hasPrice === false) it.hasPrice = true;
+    }
+    if (!it.name) it.name = 'Unbenanntes Produkt';
+    it.rel = matchesAllWords(`${it.name} ${it.brand}`, words) ? 0 : 1;
+    it.idx = idx;
+    return it;
+  });
+  const tier = (it) => (it.hasPrice === false ? 1 : 0);
+  return items.sort((a, b) => tier(a) - tier(b) || a.rel - b.rel || b.priceCount - a.priceCount || a.idx - b.idx);
+}
+
+async function fetchPriceSummaries(codes, now, signal) {
+  const list = [...new Set(codes)].slice(0, SEARCH_CODE_LIMIT);
+  if (!list.length) return new Map();
+  const url = `${PRICES_URL}?product_code__in=${list.map(encodeURIComponent).join(',')}&duplicate_of__isnull=true&order_by=-date&size=100`;
+  const data = await fetchJson(url, TIMEOUT_MS, signal);
+  return summarizePrices((data && data.items) || [], now);
+}
+
+async function searchPriceProducts(q, words, signal) {
+  const get = async (term) => {
+    const url = `${PRODUCTS_URL}?product_name__like=${encodeURIComponent(term)}&price_count__gte=1&order_by=-price_count&size=30`;
+    const data = await fetchJson(url, TIMEOUT_MS, signal);
+    return ((data && data.items) || []).map(normalizePriceProduct).filter(Boolean);
+  };
+  let list = await get(q.trim());
+  if (!list.length && words.length > 1) {
+    list = (await get(longestWord(words))).filter((p) => matchesAllWords(`${p.name} ${p.brand}`, words));
+  }
+  return list;
+}
+
+/**
+ * Produktsuche mit Preisfilter. Rückgabe {items, priceDown}:
+ * items = zusammengeführte Treffer (hasPrice true/false, bei priceDown null für OFF-Treffer).
+ * Fällt Open Prices aus, kommen die OFF-Treffer ungefiltert (priceDown); fällt OFF aus, nur Open-Prices-Treffer.
+ */
+export async function searchProductsWithPrice(q, { now = new Date(), signal } = {}) {
+  const words = searchWords(q);
+  const [opR, offR] = await Promise.allSettled([searchPriceProducts(q, words, signal), searchProducts(q)]);
+  if (opR.status === 'rejected' && offR.status === 'rejected') throw offR.reason;
+  const op = opR.status === 'fulfilled' ? opR.value : [];
+  const off = offR.status === 'fulfilled' ? offR.value : [];
+  const opCodes = new Set(op.map((p) => p.code));
+  const offCodes = off.map((p) => p.code).slice(0, SEARCH_CODE_LIMIT);
+  const onlyOp = op.map((p) => p.code).filter((c) => !offCodes.includes(c)).slice(0, SEARCH_CODE_LIMIT);
+  const [sOff, sOp] = await Promise.allSettled([fetchPriceSummaries(offCodes, now, signal), fetchPriceSummaries(onlyOp, now, signal)]);
+  // OFF-Treffer jenseits der ersten 20 Codes lassen sich nicht prüfen → nur behalten, wenn Open Prices sie kennt
+  const summaries = new Map([...(sOff.status === 'fulfilled' ? sOff.value : []), ...(sOp.status === 'fulfilled' ? sOp.value : [])]);
+  const priceDown = offCodes.length > 0 && sOff.status === 'rejected';
+  const checked = new Set(offCodes);
+  const offUsable = off.filter((p) => checked.has(p.code) || opCodes.has(p.code));
+  const priced = new Set([...summaries.keys()]);
+  const items = mergeSearchResults({ op, off: offUsable, priced, summaries, words, priceDown });
+  return { items, priceDown };
+}
+
 /**
  * Preise zu einem Barcode (Open Prices API v1). Duplikate werden serverseitig
  * (duplicate_of__isnull=true) und zur Sicherheit clientseitig ausgeblendet.

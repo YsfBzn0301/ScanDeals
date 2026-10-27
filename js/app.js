@@ -1,6 +1,6 @@
 // ScanDeals – App-Logik (Routing, Scanner-UI, Bottom-Sheet-Ansichten, Verlauf)
 import {
-  getProduct, searchProducts, getPrices, aggregatePrices, formatPrice, formatDate, relativeDate,
+  getProduct, searchProductsWithPrice, getPrices, aggregatePrices, formatPrice, formatDate, relativeDate,
   mapsLinkForBranch, mapsLinkAllBranches, formatNutrient, mergePrices, formatDistance, onlineSearchLinks, reportPriceLink,
   getDailyPrices, getShoppingPrices, getServerHealth, storeLogoUrl,
   getShoppingQuota, readQuotaCache, writeQuotaCache, normQuota, mergeQuota,
@@ -103,19 +103,89 @@ function errorBody(msg) {
     <button class="btn primary" id="retry" type="button">${icon('i-refresh')}Erneut versuchen</button></div>`;
 }
 
+// ----- Suche: nur Produkte mit Preis (Schalter, Standard an) -----
+const ONLY_PRICED_KEY = 'scandeals.onlyPriced';
+function loadOnlyPriced() { try { return localStorage.getItem(ONLY_PRICED_KEY) !== '0'; } catch { return true; } }
+function saveOnlyPriced(v) { try { localStorage.setItem(ONLY_PRICED_KEY, v ? '1' : '0'); } catch { /* ignorieren */ } }
+
+/** Listeneintrag der Suche: Name, Marke · Menge, „ab X €“ · N Preise · Datum bzw. „noch kein Preis“. */
+function searchItem(p, i) {
+  const n = p.priceCount || 0;
+  let line = '';
+  if (p.hasPrice === false) {
+    line = '<span class="sp"><span class="badge none">noch kein Preis</span></span>';
+  } else if (p.hasPrice === true) {
+    const parts = [];
+    if (p.min != null && isFinite(p.min)) parts.push(`<b class="sp-p">ab ${esc(formatPrice(p.min, p.currency || 'EUR'))}${p.old ? ' <i>(älter)</i>' : ''}</b>`);
+    if (n > 0) parts.push(`<span>${n === 1 ? '1 Preis' : `${n} Preise`}</span>`);
+    const rel = p.latest ? relativeDate(p.latest) : '';
+    line = `${parts.length ? `<span class="sp">${parts.join('')}</span>` : ''}${rel ? `<span class="sp sp-d">zuletzt ${esc(rel)}</span>` : ''}`;
+  }
+  return `<li class="stagger" style="--i:${Math.min(i, 12)}"><a class="item${p.hasPrice === false ? ' nop' : ''}" href="#/produkt/${esc(encodeURIComponent(p.code))}">
+    ${thumb(p)}<span class="item-t"><span class="t">${esc(p.name)}</span><span class="s">${esc(subOf(p) || p.code)}</span>${line}</span>
+    ${icon('i-next', 'chev')}</a></li>`;
+}
+
 async function searchView(q, token) {
   $('#q').value = q;
   $('#q').dispatchEvent(new Event('input'));
   await showSheet(simpleHead('Suche', `„${q}“`), skeleton(), { snap: 'full', back: false });
   try {
-    const list = await searchProducts(q);
+    const res = await searchProductsWithPrice(q);
     if (token !== navToken) return;
-    const bodyHtml = list.length
-      ? `<ul class="list">${list.map(productItem).join('')}</ul>`
-      : `<div class="state surface">${icon('i-search', 'state-ico')}<p class="state-t">Nichts gefunden.</p>
-         <p class="state-s">Versuche einen anderen Suchbegriff oder scanne den Barcode.</p></div>${dailySectionShell('', '--i:1')}`;
-    await showSheet(simpleHead('Ergebnisse', `${list.length} ${list.length === 1 ? 'Treffer' : 'Treffer'} für „${q}“`), bodyHtml, {
-      onInsert: list.length ? undefined : (h, b) => { loadDaily(b, { q }, token, null, { title: 'Online gefunden', shoppingOnly: true, hideEmpty: true }); },
+    const all = res.items;
+    if (!all.length) {
+      await showSheet(simpleHead('Ergebnisse', `Keine Treffer für „${q}“`), `<div class="state surface">${icon('i-search', 'state-ico')}<p class="state-t">Nichts gefunden.</p>
+         <p class="state-s">Versuche einen anderen Suchbegriff oder scanne den Barcode.</p></div>${dailySectionShell('', '--i:1')}`, {
+        onInsert: (h, b) => { loadDaily(b, { q }, token, null, { title: 'Online gefunden', shoppingOnly: true, hideEmpty: true }); },
+      });
+      return;
+    }
+    const down = res.priceDown;
+    const priced = all.filter((p) => p.hasPrice === true);
+    const unpriced = all.filter((p) => p.hasPrice === false);
+    let only = loadOnlyPriced();
+    const shown = () => (down ? all : only ? priced : all);
+    const countHtml = () => {
+      if (down) return `<b>${all.length}</b> ${all.length === 1 ? 'Produkt' : 'Produkte'}`;
+      return `<b>${priced.length}</b> ${priced.length === 1 ? 'Produkt' : 'Produkte'} mit Preis`;
+    };
+    const listHtml = () => {
+      const list = shown();
+      if (list.length) return `<ul class="list">${list.map(searchItem).join('')}</ul>`;
+      return `<div class="state surface">${icon('i-search', 'state-ico')}<p class="state-t">Keine Produkte mit Preis gefunden</p>
+        <p class="state-s">Zu „${esc(q)}“ gibt es Treffer, aber noch keine gemeldeten Preise.</p>
+        <button class="btn glass-btn" id="sr-all" type="button">Alle Produkte anzeigen</button></div>${dailySectionShell('', '--i:1')}`;
+    };
+    const bar = `<div class="sr-bar"><p class="sr-count" id="sr-count" aria-live="polite">${countHtml()}</p>
+      ${down ? '<p class="sr-note">Preisfilter gerade nicht verfügbar</p>'
+        : `<button class="gt" id="sr-toggle" type="button" role="switch" aria-checked="${only}"><span class="gt-l">Nur mit Preis</span><span class="gt-t" aria-hidden="true"><i></i></span></button>`}</div>`;
+    let swapping = 0;
+    const wire = (root) => {
+      const all2 = $('#sr-all', root);
+      if (all2) all2.onclick = () => setOnly(false);
+      if (!shown().length && !down) loadDaily(root, { q }, token, null, { title: 'Online gefunden', shoppingOnly: true, hideEmpty: true });
+    };
+    const setOnly = async (v) => {
+      if (v === only || token !== navToken) return;
+      only = v;
+      saveOnlyPriced(v);
+      haptic(8);
+      const tg = $('#sr-toggle');
+      if (tg) tg.setAttribute('aria-checked', String(v));
+      const cnt = $('#sr-count');
+      if (cnt) cnt.innerHTML = countHtml();
+      const box = $('#sr-list');
+      if (!box) return;
+      const my = ++swapping;
+      await liquidSwap(box, listHtml(), (el) => { if (my === swapping && token === navToken) wire(el); });
+    };
+    await showSheet(simpleHead('Ergebnisse', `„${q}“`), `${bar}<div id="sr-list">${listHtml()}</div>`, {
+      onInsert: (h, b) => {
+        const tg = $('#sr-toggle', b);
+        if (tg) tg.onclick = () => setOnly(!only);
+        wire(b);
+      },
     });
   } catch (e) {
     if (token !== navToken) return;
@@ -807,10 +877,11 @@ function kiView(query, token) {
     const box = $('#ki-db', b);
     if (dpMeta) loadDaily(b, dpMeta, token, null);
     try {
-      const list = (await searchProducts(query)).slice(0, 8);
+      const res = await searchProductsWithPrice(query);
       if (token !== navToken || !box.isConnected) return;
-      box.innerHTML = list.length ? `<ul class="list">${list.map(productItem).join('')}</ul>`
-        : `<div class="state surface slim"><p class="state-s">Keine passenden Produkte gefunden.</p></div>`;
+      const list = res.items.filter((p) => p.hasPrice !== false).slice(0, 8);
+      if (!list.length) { const sec = box.closest('section'); if (sec) sec.remove(); return; }
+      box.innerHTML = `<ul class="list">${list.map(searchItem).join('')}</ul>`;
     } catch (e) {
       if (token !== navToken || !box.isConnected) return;
       box.innerHTML = `<div class="state surface slim"><p class="state-s">${esc(errText(e))}</p></div>`;
