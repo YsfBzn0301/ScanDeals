@@ -169,7 +169,7 @@ function onlineSection(p) {
 function nutritionTable(nu, mode) {
   const key = mode === 'serving' ? 'perServing' : 'per100';
   return `<table class="nw-table"><tbody>${nu.rows.map((r) =>
-    `<tr class="${r.indent ? 'sub' : ''}"><th scope="row">${esc(r.label)}</th><td>${esc(formatNutrient(r, r[key]))}</td></tr>`).join('')}</tbody></table>`;
+    `<tr class="${r.indent ? 'sub' : ''}"><th scope="row">${esc(r.label)}</th><td>${esc(formatNutrient(r, r[key], r[key + 'Mod']))}</td></tr>`).join('')}</tbody></table>`;
 }
 
 function nutritionSection(p) {
@@ -177,7 +177,7 @@ function nutritionSection(p) {
   if (!nu || !nu.rows || !nu.rows.length) return '';
   const unit = nu.per === '100ml' ? '100 ml' : '100 g';
   const hasServing = nu.rows.some((r) => r.perServing !== null && r.perServing !== undefined);
-  const sLabel = nu.serving ? `pro Portion (${esc(nu.serving)})` : 'pro Portion';
+  const sLabel = (nu.serving ? `pro Portion (${esc(nu.serving)})` : 'pro Portion') + (nu.servingComputed ? ' <small class="nw-calc">berechnet</small>' : '');
   const head = hasServing
     ? `<div class="seg nw-seg" role="group" aria-label="Bezugsmenge" data-mode="100">
         <span class="seg-thumb" aria-hidden="true"></span>

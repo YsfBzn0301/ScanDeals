@@ -40,8 +40,8 @@ Im Sucher lässt sich zwischen drei Erkennungsmodi wählen:
 
 ## Datenquellen
 
-- **Open Food Facts** (Produktdaten, Namen, Bilder): https://world.openfoodfacts.org
-- **Open Prices** (Preismeldungen der Community): https://prices.openfoodfacts.org
+- **Open Food Facts** (Produktdaten, Namen, Bilder, Nährwerte): https://world.openfoodfacts.org – Abruf per Barcode über die **API v3.6**, bei technischen Fehlern (Netz, Timeout, 5xx, unerwartetes Format) mit Fallback auf API v2. Die Textsuche nutzt die klassische Suche (`/cgi/search.pl`), da v3 noch keine Volltextsuche bietet.
+- **Open Prices** (Preismeldungen der Community, API v1): https://prices.openfoodfacts.org
 
 Beide Datenbanken sind frei verfügbar und stehen unter der **Open Database License (ODbL)**. Die Preisdaten stammen von Nutzerinnen und Nutzern, ScanDeals ist nicht mit Open Food Facts oder Open Prices verbunden. Keine API-Schlüssel nötig.
 

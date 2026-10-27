@@ -1,6 +1,10 @@
 // ScanDeals – Datenzugriff und reine Hilfsfunktionen
 export const OFF_FIELDS = 'code,product_name,product_name_de,brands,quantity,image_front_small_url';
 export const OFF_FIELDS_DETAIL = OFF_FIELDS + ',nutriments,nutrition_data_per,serving_size,serving_quantity';
+// API v3.6 (Produktabruf per Barcode); nutrition = neue Nährwert-Struktur, selected_images = Bild-URLs
+export const API_V3_BASE = 'https://world.openfoodfacts.org/api/v3.6/product';
+export const OFF_FIELDS_V3 = 'code,product_name,product_name_de,brands,quantity,serving_size,serving_quantity,serving_quantity_unit,nutrition,selected_images,image_front_small_url';
+export const V3_TIMEOUT_MS = 8000;
 export const PRODUCT_HOSTS = [
   'https://world.openfoodfacts.org',
   'https://world.openproductsfacts.org',
@@ -33,6 +37,17 @@ export async function fetchJson(url, timeout = TIMEOUT_MS) {
   }
 }
 
+/** Frontbild: v3 selected_images.front.best (200/400/100) → image_front_small_url → leer. */
+function frontImage(p) {
+  const best = p && p.selected_images && p.selected_images.front && p.selected_images.front.best;
+  if (best && typeof best === 'object') {
+    for (const size of ['200', '400', '100']) {
+      if (typeof best[size] === 'string' && best[size]) return best[size];
+    }
+  }
+  return typeof p.image_front_small_url === 'string' ? p.image_front_small_url : '';
+}
+
 export function normalizeProduct(p) {
   if (!p || !p.code) return null;
   const name = (p.product_name_de || p.product_name || '').trim();
@@ -41,8 +56,8 @@ export function normalizeProduct(p) {
     code: String(p.code),
     name: name || 'Unbenanntes Produkt',
     brand,
-    quantity: (p.quantity || '').trim(),
-    image: p.image_front_small_url || '',
+    quantity: String(p.quantity || '').trim(),
+    image: frontImage(p),
     nutrition: extractNutrition(p),
   };
 }
@@ -61,8 +76,18 @@ function nutriNum(v) {
 }
 function macroVal(n, max) { return n !== null && n >= 0 && n <= max ? n : null; }
 
-/** Nährwerte aus einem OFF-Produkt; null, wenn nichts Brauchbares vorhanden ist. */
+/** Nährwerte aus einem OFF-Produkt (API v3.6 `nutrition` oder altes v2 `nutriments`); null, wenn nichts Brauchbares da ist. */
 export function extractNutrition(p) {
+  if (!p || typeof p !== 'object') return null;
+  if (p.nutrition && typeof p.nutrition === 'object') {
+    const v3 = extractNutritionV3(p);
+    if (v3) return v3;
+  }
+  return extractNutritionV2(p);
+}
+
+/** Altes v2-Format (`nutriments` mit *_100g / *_serving). */
+function extractNutritionV2(p) {
   const n = p && typeof p === 'object' ? p.nutriments : null;
   if (!n || typeof n !== 'object') return null;
   const isMl = /(^|[\d\s.,])\s*(ml|cl|l)\s*\.?$/i.test(String(p.quantity || '').trim());
@@ -93,19 +118,185 @@ export function extractNutrition(p) {
   };
 }
 
-/** Deutsche Zahlenformatierung für Nährwert-Zellen; null/undefined → „–“. */
-export function formatNutrient(row, v) {
+// ---------- Nährwerte: API v3.6 (nutrition.aggregated_set / input_sets) ----------
+const KJ_PER_KCAL = 4.184;
+const MODIFIERS = ['<', '<=', '~', '>=', '>'];
+const MASS_FACTOR = new Map([['', 1], ['g', 1], ['mg', 1e-3], ['µg', 1e-6], ['μg', 1e-6], ['ug', 1e-6], ['mcg', 1e-6], ['kg', 1000]]);
+const SOURCE_RANK = { manufacturer: 0, packaging: 1 };
+
+function v3Raw(nut) {
+  if (!nut || typeof nut !== 'object') return null;
+  const v = nutriNum(nut.value);
+  return v !== null ? v : nutriNum(nut.value_computed);
+}
+function v3Mod(nut) { return MODIFIERS.includes(nut && nut.modifier) ? nut.modifier : undefined; }
+function unitOf(nut) { return String(nut.unit == null ? '' : nut.unit).trim().toLowerCase(); }
+
+/** Masse in g; normalized = Einheiten bereits normalisiert (aggregated_set). Nutzer-Einheiten (input_sets) werden umgerechnet, unbekannte (dv, %, …) verworfen. */
+function v3Mass(nut, normalized) {
+  const v = v3Raw(nut);
+  if (v === null) return null;
+  if (normalized) return { n: v, mod: v3Mod(nut) };
+  const f = MASS_FACTOR.get(unitOf(nut));
+  return f === undefined ? null : { n: v * f, mod: v3Mod(nut) };
+}
+
+function v3Energy(nuts, normalized, max) {
+  let kj = null, kcal = null, mod;
+  for (const id of ['energy-kj', 'energy', 'energy-kcal']) {
+    const nut = nuts[id];
+    const v = v3Raw(nut);
+    if (v === null) continue;
+    let kind = id === 'energy-kcal' ? 'kcal' : 'kj';
+    if (!normalized) {
+      const u = unitOf(nut);
+      if (u === 'kcal') kind = 'kcal';
+      else if (u === 'kj') kind = 'kj';
+      else if (u !== '') continue;
+    }
+    if (kind === 'kj' && kj === null) { kj = v; mod = mod || v3Mod(nut); }
+    else if (kind === 'kcal' && kcal === null) { kcal = v; mod = mod || v3Mod(nut); }
+  }
+  if (kcal === null && kj !== null) kcal = Math.round(kj / KJ_PER_KCAL);
+  else if (kj === null && kcal !== null) kj = Math.round(kcal * KJ_PER_KCAL);
+  kcal = macroVal(kcal, 9 * max);
+  kj = macroVal(kj, 38 * max);
+  return kcal === null && kj === null ? null : { value: { kj, kcal }, mod };
+}
+
+/** Liest einen Nährwertsatz → Map key → {value, mod}; max = größte plausible Menge in g. */
+function v3ReadSet(set, normalized, max) {
+  const nuts = set && typeof set.nutrients === 'object' && set.nutrients ? set.nutrients : {};
+  const out = new Map();
+  const e = v3Energy(nuts, normalized, max);
+  if (e) out.set('energy', e);
+  for (const [key] of NUTRI_ROWS) {
+    let m = v3Mass(nuts[key], normalized);
+    if (m === null && key === 'salt') {
+      const na = v3Mass(nuts.sodium, normalized);
+      if (na) m = { n: na.n * 2.5, mod: na.mod };
+    }
+    const n = m ? macroVal(m.n, max) : null;
+    if (n !== null) out.set(key, { value: n, mod: m.mod });
+  }
+  return out;
+}
+
+function setRank(s) { return SOURCE_RANK[s && s.source] ?? 2; }
+function usableSets(p, pred) {
+  const sets = p.nutrition && Array.isArray(p.nutrition.input_sets) ? p.nutrition.input_sets : [];
+  return sets.filter((s) => s && typeof s === 'object' && (s.preparation === undefined || s.preparation === null || s.preparation === 'as_sold') && pred(s))
+    .sort((a, b) => setRank(a) - setRank(b)); // Array.sort ist stabil
+}
+
+function fmtQty(q) { return String(Math.round(q * 100) / 100).replace('.', ','); }
+
+function extractNutritionV3(p) {
+  const nu = p.nutrition;
+  const isMl = /(^|[\d\s.,])\s*(ml|cl|l)\s*\.?$/i.test(String(p.quantity || '').trim());
+  let per = isMl ? '100ml' : '100g';
+  // pro 100 g/ml
+  let base = null;
+  const agg = nu.aggregated_set;
+  if (agg && typeof agg === 'object') {
+    const m = v3ReadSet(agg, true, 100);
+    if (m.size) {
+      base = m;
+      if (agg.per === '100g' || agg.per === '100ml') per = agg.per;
+    }
+  }
+  if (!base) {
+    for (const s of usableSets(p, (x) => x.per === '100g' || x.per === '100ml')) {
+      const m = v3ReadSet(s, false, 100);
+      if (m.size) { base = m; per = s.per; break; }
+    }
+  }
+  // pro Portion
+  let serv = null, label = '', computed = false;
+  for (const s of usableSets(p, (x) => x.per === 'serving')) {
+    const pq = nutriNum(s.per_quantity);
+    const m = v3ReadSet(s, false, pq !== null && pq > 0 ? pq : 1000);
+    if (!m.size) continue;
+    serv = m;
+    if (pq !== null && pq > 0 && typeof s.per_unit === 'string' && s.per_unit.trim()) label = `${fmtQty(pq)} ${s.per_unit.trim()}`;
+    break;
+  }
+  if (!serv && base) {
+    const sq = nutriNum(p.serving_quantity);
+    const su = String(p.serving_quantity_unit == null ? '' : p.serving_quantity_unit).trim().toLowerCase();
+    if (sq !== null && sq > 0 && (su === '' || su === 'g' || su === 'ml')) {
+      const f = sq / 100;
+      const r3 = (x) => (x === null ? null : Math.round(x * f * 1000) / 1000);
+      serv = new Map();
+      for (const [k, { value, mod }] of base) {
+        const v = k === 'energy' ? { kj: r3(value.kj), kcal: r3(value.kcal) } : r3(value);
+        serv.set(k, { value: v, mod });
+      }
+      computed = true;
+      label = String(p.serving_size || '').trim() || `${fmtQty(sq)} ${su || (isMl ? 'ml' : 'g')}`;
+    }
+  }
+  const rows = [];
+  const add = (key, lbl, unit, indent) => {
+    const a = base && base.get(key), b = serv && serv.get(key);
+    if (!a && !b) return;
+    const row = { key, label: lbl, unit, per100: a ? a.value : null, perServing: b ? b.value : null, indent };
+    if (a && a.mod) row.per100Mod = a.mod;
+    if (b && b.mod) row.perServingMod = b.mod;
+    rows.push(row);
+  };
+  add('energy', 'Energie', 'kJ/kcal', false);
+  for (const [key, lbl, ind] of NUTRI_ROWS) add(key, lbl, 'g', !!ind);
+  if (!rows.length) return null;
+  const hasServing = rows.some((r) => r.perServing !== null);
+  const res = { per, serving: hasServing ? (label || String(p.serving_size || '').trim()) : '', rows };
+  if (hasServing && computed) res.servingComputed = true;
+  return res;
+}
+
+/** Deutsche Zahlenformatierung für Nährwert-Zellen; null/undefined → „–“. mod = optionaler Modifier (<, <=, ~, >=, >). */
+export function formatNutrient(row, v, mod) {
   if (v === null || v === undefined) return '–';
+  const sym = mod ? ({ '<=': '≤', '>=': '≥' }[mod] || mod) + ' ' : '';
   if (row.key === 'energy') {
     const part = (x, u) => (x === null ? '' : `${Math.round(x).toLocaleString('de-DE')} ${u}`);
-    return [part(v.kj, 'kJ'), part(v.kcal, 'kcal')].filter(Boolean).join(' / ');
+    return sym + [part(v.kj, 'kJ'), part(v.kcal, 'kcal')].filter(Boolean).join(' / ');
   }
+  if (mod) return `${sym}${new Intl.NumberFormat('de-DE', { maximumFractionDigits: v < 1 ? 2 : 1 }).format(v)} g`;
   if (v > 0 && v < 0.1) return '< 0,1 g';
   return `${new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 }).format(v)} g`;
 }
 
-/** Produkt per Barcode; null wenn in keiner Datenbank gefunden. */
+/**
+ * Produkt per Barcode über OFF API v3.6. 404 / status "failure" → null (echtes „nicht gefunden“).
+ * Netzwerkfehler, Timeout, 5xx oder unerwartetes Format → Ausnahme (getProduct fällt dann auf v2 zurück).
+ */
+export async function getProductV3(code) {
+  let data;
+  try {
+    data = await fetchJson(`${API_V3_BASE}/${encodeURIComponent(code)}?product_type=all&lc=de&cc=de&fields=${OFF_FIELDS_V3}`, V3_TIMEOUT_MS);
+  } catch (e) {
+    if (e && e.status === 404) return null;
+    throw e;
+  }
+  const ok = ['success', 'success_with_warnings', 'success_with_errors'];
+  if (!data || typeof data !== 'object' || typeof data.status !== 'string') throw new Error('Unerwartetes Antwortformat (v3.6)');
+  if (data.status === 'failure') return null;
+  if (!ok.includes(data.status) || !data.product || typeof data.product !== 'object') throw new Error('Unerwartetes Antwortformat (v3.6)');
+  return normalizeProduct({ ...data.product, code: data.product.code || code });
+}
+
+/** Produkt per Barcode; null wenn in keiner Datenbank gefunden. v3.6, bei technischen Fehlern Fallback auf v2. */
 export async function getProduct(code) {
+  try {
+    return await getProductV3(code);
+  } catch {
+    return getProductV2(code);
+  }
+}
+
+/** Bisheriger Abruf über API v2 (drei Hosts); Fallback für getProduct. */
+export async function getProductV2(code) {
   let lastErr = null;
   let anySuccess = false;
   for (const host of PRODUCT_HOSTS) {
@@ -124,6 +315,7 @@ export async function getProduct(code) {
   return null;
 }
 
+// Volltextsuche: v2/v3 bieten keine (laut OFF-Doku, ref-cheatsheet), daher weiter die klassische Suche /cgi/search.pl.
 export async function searchProducts(q) {
   const url = `${PRODUCT_HOSTS[0]}/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=20&fields=${OFF_FIELDS}&countries_tags_en=germany`;
   const data = await fetchJson(url);

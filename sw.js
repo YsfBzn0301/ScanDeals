@@ -6,7 +6,7 @@
 //   alles andere (z. B. CDN-Module, TF-Modellgewichte): stale-while-revalidate
 //   *.workers.dev (KI-Server) und alle Nicht-GET-Requests: nie gecacht, direkt ans Netz
 
-const CACHE = 'scandeals-v4';
+const CACHE = 'scandeals-v5';
 
 const SHELL = [
   './',

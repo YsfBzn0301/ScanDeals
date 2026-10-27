@@ -379,6 +379,7 @@ html.ai-on .ai-dot { opacity: 1; transform: scale(1); }
 /* ---------- Nährwerte ---------- */
 .nw-card { padding: 14px 16px 12px; border-radius: var(--r-md); display: flex; flex-direction: column; gap: 10px; }
 .nw-seg button { min-height: 36px; font-size: 13px; padding: 0 6px; }
+.nw-calc { font-size: 11px; font-weight: 600; opacity: .75; margin-left: 2px; }
 .nw-ref { font-size: 14px; font-weight: 650; color: var(--muted); }
 .nw-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 .nw-table tr + tr { border-top: 1px solid rgba(255, 255, 255, .08); }
