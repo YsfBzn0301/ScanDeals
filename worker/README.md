@@ -44,6 +44,26 @@ npx wrangler deploy
 
 Zum Abschalten in den Einstellungen „Entfernen“ wählen, dann läuft die App wieder im Gratis-Modus.
 
+## Tagespreise (Open Price Engine)
+
+Optional kann der Worker tagesaktuelle Onlineshop-Preise über die [Open Price Engine](https://openpricengine.com) abfragen. Ohne Key bleibt alles andere unverändert (`/prices` antwortet dann mit 503).
+
+1. Auf <https://openpricengine.com> ein Konto anlegen und einen API-Key holen. Der Gratis-Tarif umfasst 10 Läden aus 4 Ländern und der Key gilt nur **1 Monat**. Prüfe, ob Deutschland enthalten ist.
+2. Key als Secret speichern und deployen:
+   ```bash
+   npx wrangler secret put OPE_API_KEY
+   npx wrangler deploy
+   ```
+3. Im Browser `https://<worker>/prices/stores` öffnen. Dort stehen die echten Länder- und Laden-Kürzel. Lies die deutschen Läden ab und passe `OPE_STORES` in der `wrangler.toml` an (`slug` = Kürzel für die URL, `name` = Anzeigename). Danach erneut `npx wrangler deploy`.
+4. Test: `OPE_DEBUG = "true"` setzen, deployen und `https://<worker>/prices?q=nutella&brand=ferrero&qty=450%20g` im Browser öffnen. Danach `OPE_DEBUG` wieder entfernen und erneut deployen.
+
+Hinweise:
+- Die Preise stammen aus Onlineshops und können von Filialpreisen abweichen. Gesucht wird nur über den Namen (kein Barcode), deshalb können auch „ähnliche Produkte“ erscheinen. Das Feld `score` (0 bis 1) und `same_size` zeigen, wie gut der Treffer passt.
+- Antworten werden 6 Stunden im Cloudflare-Cache gehalten. Pro Anfrage werden alle Läden aus `OPE_STORES` abgefragt; ein ausgefallener Laden steht in `errors`.
+- Das Antwortformat der API ist nicht dokumentiert. Der Worker erkennt gängige Feldnamen automatisch. Passt ein Laden nicht, hilft der **Debug-Modus**: `OPE_DEBUG = "true"` in der `wrangler.toml` setzen, deployen und `/prices?q=nutella&raw=1` aufrufen. Dann hängt der Worker die rohen Antworten je Laden als `raw` an. Danach den Debug-Modus wieder ausschalten.
+- Optional: `OPE_BASE` ändert die API-Basisadresse (Standard `https://openpricengine.com/api/v1`).
+- `/prices/stores` funktioniert auch direkt im Browser. `/prices` verbraucht dein Kontingent und antwortet deshalb nur der App (erlaubte Origins) – außer im Debug-Modus. Beide unterliegen demselben Rate-Limit wie `/identify`.
+
 ## Erlaubte Webseiten (CORS) ändern
 
 Nur Seiten aus `ALLOWED_ORIGINS` dürfen den Worker nutzen. Standard in `wrangler.toml`:
@@ -72,7 +92,8 @@ Die automatischen Tests (ohne Netzwerk, ohne Key) startest du mit `npm test`.
 
 ## Schnittstellen
 
-- `GET /health` gibt `{ok, model, configured}` zurück.
+- `GET /health` gibt `{ok, model, configured, features: {ai, prices}}` zurück.
+- `GET /prices?q=…&brand=…&qty=…` liefert Tagespreise (siehe unten), `GET /prices/stores` die Läden-Liste der Open Price Engine.
 - `POST /identify` mit `{"image": "<Base64-JPEG ohne Präfix>", "hint": "mouse"}` gibt `{is_product, name, brand, model, category, confidence, search_query, barcode}` zurück. Fehler kommen als `{"error": "…"}` mit passendem Statuscode (400, 403, 413, 422, 429, 500, 502).
 
 ## Schutzmaßnahmen und Grenzen

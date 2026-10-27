@@ -554,6 +554,60 @@ export async function identifyProduct(endpoint, { image, hint } = {}, { timeout 
   }
 }
 
+// ---------- ScanDeals-Server: /health und Tagespreise ----------
+const HEALTH_KEY = 'scandeals.health';
+const HEALTH_TTL = 10 * 60 * 1000;
+
+/** Funktionsumfang des Servers aus /health (10 min in sessionStorage); {ok, ai, prices, model, configured}. Wirft bei Fehlern. */
+export async function getServerHealth(endpoint, { force = false, timeout = 8000 } = {}) {
+  if (!force) {
+    try {
+      const c = JSON.parse(sessionStorage.getItem(HEALTH_KEY) || 'null');
+      if (c && c.ep === endpoint && Date.now() - c.ts < HEALTH_TTL) return c.data;
+    } catch { /* ignorieren */ }
+  }
+  const d = await fetchJson(`${endpoint}/health`, timeout);
+  const f = d && typeof d.features === 'object' && d.features ? d.features : {};
+  const data = {
+    ok: !!(d && d.ok),
+    model: d && d.model ? String(d.model).slice(0, 60) : '',
+    configured: d ? d.configured : undefined,
+    ai: f.ai !== undefined ? !!f.ai : !!(d && d.ok && d.configured !== false),
+    prices: !!f.prices,
+  };
+  if (data.ok) {
+    try { sessionStorage.setItem(HEALTH_KEY, JSON.stringify({ ep: endpoint, ts: Date.now(), data })); } catch { /* ignorieren */ }
+  }
+  return data;
+}
+
+/** Tagespreise aus Onlineshops (Open Price Engine über den eigenen Server): GET {endpoint}/prices. */
+export async function getDailyPrices(endpoint, { q, brand, qty } = {}, { signal, timeout = 15000 } = {}) {
+  const params = new URLSearchParams({ q: String(q || '') });
+  if (brand) params.set('brand', String(brand));
+  if (qty) params.set('qty', String(qty));
+  const data = await fetchJson(`${endpoint}/prices?${params}`, timeout, signal);
+  if (!data || typeof data !== 'object' || !Array.isArray(data.results)) throw new Error('Ungültige Antwort');
+  return data.results.map((r) => ({
+    store: String(r.store || '').slice(0, 80),
+    storeSlug: String(r.store_slug || ''),
+    productName: String(r.product_name || '').slice(0, 200),
+    price: Number(r.price),
+    currency: /^[A-Z]{3}$/.test(r.currency || '') ? r.currency : 'EUR',
+    date: r.date || '',
+    url: /^https?:\/\//i.test(r.url || '') ? r.url : '',
+    score: Number(r.score),
+    sameSize: r.same_size === true ? true : r.same_size === false ? false : null,
+  })).filter((r) => r.store && isFinite(r.price) && r.price > 0).sort((a, b) => a.price - b.price);
+}
+
+/** Händler-Logo wie bei Open Prices (Open-Food-Facts-Markenbilder); Slug = Name klein, ohne Umlaut-Akzente, sonst '-'. */
+export function storeLogoUrl(name) {
+  const slug = String(name || '').toLowerCase().replace(/ß/g, 'ss').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return slug ? `https://raw.githubusercontent.com/openfoodfacts/brand-images/refs/heads/main/xx/stores/${slug}.png` : '';
+}
+
 export function reportPriceLink(code) {
   return `https://prices.openfoodfacts.org/prices/add/single?code=${encodeURIComponent(code)}`;
 }

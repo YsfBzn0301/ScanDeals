@@ -1,10 +1,11 @@
 // ScanDeals – App-Logik (Routing, Scanner-UI, Bottom-Sheet-Ansichten, Verlauf)
 import {
   getProduct, searchProducts, getPrices, aggregatePrices, formatPrice, formatDate, relativeDate,
-  mapsLinkForBranch, mapsLinkAllBranches, formatNutrient, mergePrices, formatDistance, onlineSearchLinks, reportPriceLink, fetchJson,
+  mapsLinkForBranch, mapsLinkAllBranches, formatNutrient, mergePrices, formatDistance, onlineSearchLinks, reportPriceLink,
+  getDailyPrices, getServerHealth, storeLogoUrl,
 } from './api.js';
 import { openCamera, startBarcodeLoop, stopBarcodeLoop, stopScanner, hasTorch, setTorch } from './scanner.js';
-import { getAiEndpoint, setAiEndpoint, normalizeEndpoint, isValidEndpoint, getMode, setMode, MODES } from './config.js';
+import { getAiEndpoint, getServerEndpoint, setAiEndpoint, normalizeEndpoint, isValidEndpoint, getMode, setMode, MODES } from './config.js';
 import { initKi, start as kiStart, stop as kiStop } from './ki.js';
 import { initSheet, openSheet, closeSheet, setContent, isOpen, snapTo, getSnap, getBody } from './sheet.js';
 import { haptic, countUp, liquidSwap, isReduced, sleep } from './motion.js';
@@ -187,6 +188,73 @@ function onlineSection(p) {
     `<a class="chip" href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}${icon('i-ext')}</a>`).join('')}</div></section>`;
 }
 
+// ----- Tagesaktuell im Onlineshop (Open Price Engine über den eigenen Server) -----
+/** Platzhalter; bleibt versteckt, bis der Server Tagespreise meldet. */
+function dailySectionShell(cls = '', style = '--i:4') {
+  return getServerEndpoint() ? `<section class="block dp ${cls}" id="dp-sec" style="${style}" aria-label="Tagesaktuell im Onlineshop" hidden></section>` : '';
+}
+
+function dailyCard(r, i) {
+  const rel = r.date ? relativeDate(r.date) : '';
+  const badges = (r.sameSize === true ? '<span class="badge same">gleiche Größe</span>' : '')
+    + (r.sameSize === false ? '<span class="badge diff">andere Größe</span>' : '')
+    + (r.score < 0.7 ? '<span class="badge sim">ähnliches Produkt</span>' : '');
+  const tile = logoTile({ name: r.store, logo: storeLogoUrl(r.store) });
+  const inner = `${tile}<div class="pc-l"><span class="pc-name">${esc(r.store)}</span>
+      <span class="pc-meta">${esc(rel || 'Onlineshop')}</span>
+      <span class="dp-pn">${esc(r.productName)}</span>
+      <span class="pc-badges">${badges}</span></div>
+    <div class="pc-r"><span class="pc-price" data-price="${r.price}" data-cur="${esc(r.currency)}">${esc(formatPrice(r.price, r.currency))}</span>${r.url ? icon('i-ext', 'dp-go') : ''}</div>`;
+  const u = safeUrl(r.url);
+  return u
+    ? `<a class="dcard surface stagger" style="--i:${i}" href="${esc(u)}" target="_blank" rel="noopener">${inner}</a>`
+    : `<div class="dcard surface stagger" style="--i:${i}">${inner}</div>`;
+}
+
+function dailyBody(list) {
+  return `<h2 class="label">Tagesaktuell im Onlineshop</h2>
+    ${list.length ? `<div class="dlist">${list.map(dailyCard).join('')}</div>`
+      : '<div class="state surface slim"><p class="state-s">Keine Tagespreise gefunden.</p></div>'}
+    <p class="hint-s">Preise aus den Onlineshops, Stand laut Open Price Engine. Können vom Filialpreis abweichen.</p>`;
+}
+
+/** Lädt Tagespreise in #dp-sec; gibt Liste zurück (leer bei Fehler/Abschnitt versteckt). */
+async function loadDaily(b, params, token, st) {
+  const sec = $('#dp-sec', b);
+  const ep = getServerEndpoint();
+  if (!sec || !ep || !params.q) return;
+  const live = () => token === navToken && sec.isConnected;
+  try {
+    const h = await getServerHealth(ep);
+    if (!live() || !h.prices) return;
+    sec.innerHTML = '<h2 class="label">Tagesaktuell im Onlineshop</h2><div class="skeleton" role="status" aria-label="Lädt …"><div class="sk sk-row"></div><div class="sk sk-row"></div></div>';
+    sec.hidden = false;
+    const list = await getDailyPrices(ep, params);
+    if (!live()) return;
+    sec.innerHTML = dailyBody(list);
+    runCountUps(sec);
+    settleLogos(sec);
+    if (st) { st.daily = list.filter((r) => r.sameSize !== false)[0] || null; refreshHeroOnline(b, st); }
+  } catch {
+    if (live()) { sec.hidden = true; sec.innerHTML = ''; }
+  }
+}
+
+function heroOnlineHtml(st, best) {
+  const d = st && st.daily;
+  if (!d || !best || d.currency !== best.currency || !(d.price < best.price)) return '';
+  return `<div class="hero-online">${icon('i-globe')}<span>Online heute: <b>${esc(formatPrice(d.price, d.currency))}</b> bei ${esc(d.store)}</span></div>`;
+}
+
+function refreshHeroOnline(b, st) {
+  const hero = $('#hero-wrap .hero', b);
+  if (!hero) return;
+  const old = $('.hero-online', hero);
+  if (old) old.remove();
+  const html = heroOnlineHtml(st, priceView(st).best);
+  if (html) hero.insertAdjacentHTML('beforeend', html);
+}
+
 function nutritionTable(nu, mode) {
   const key = mode === 'serving' ? 'perServing' : 'per100';
   return `<table class="nw-table"><tbody>${nu.rows.map((r) =>
@@ -231,7 +299,7 @@ function footerBlock(p, withReport) {
     <p>Quelle: Open Prices / Open Food Facts (Community, ODbL). Preise können abweichen.</p></div>`;
 }
 
-function heroHtml(best, cheapest, priciest, anim = true) {
+function heroHtml(best, cheapest, priciest, anim = true, extra = '') {
   const diff = priciest.price - cheapest.price;
   const save = diff > 0.004 ? `bis zu ${esc(formatPrice(diff, cheapest.currency))} günstiger` : 'Einziger aktueller Preis';
   const when = cheapest.date ? relativeDate(cheapest.date) : '';
@@ -239,7 +307,7 @@ function heroHtml(best, cheapest, priciest, anim = true) {
     <div class="hero-top"><span class="badge best big">Bestpreis</span><span class="hero-when">${esc(when)}</span></div>
     <div class="hero-price" data-price="${best.price}" data-cur="${esc(best.currency)}">${esc(formatPrice(best.price, best.currency))}</div>
     <div class="hero-shop">${logoTile(best, 'sm')}<div class="hero-shop-t">${esc(best.name)}${best.city && best.type !== 'ONLINE' ? `<span> · ${esc(best.city)}</span>` : ''}${isFinite(best.distanceKm) ? `<span class="dist">${icon('i-pin')}${esc(formatDistance(best.distanceKm))}</span>` : ''}</div></div>
-    <div class="hero-save">${icon('i-arrow', 'down')}${save}</div></section>`;
+    <div class="hero-save">${icon('i-arrow', 'down')}${save}</div>${extra}</section>`;
 }
 
 function runCountUps(root, base = 0) {
@@ -299,8 +367,8 @@ function priceView(st) {
   };
 }
 
-function heroFor(v, anim) {
-  return v.best ? heroHtml(v.best, v.best, v.current.rows[v.current.rows.length - 1], anim) : '';
+function heroFor(v, anim, st) {
+  return v.best ? heroHtml(v.best, v.best, v.current.rows[v.current.rows.length - 1], anim, heroOnlineHtml(st, v.best)) : '';
 }
 
 function listContent(st, v, p) {
@@ -345,14 +413,14 @@ function renderProduct(p, items, back, near = null, radius = 10) {
   let st = null;
   if (items === null) {
     bodyHtml = `<div class="state surface">${icon('i-alert', 'state-ico')}<p class="state-t">Preise gerade nicht verfügbar.</p>
-      <p class="state-s">Prüfe die Online-Links unten.</p></div>${nutritionSection(p)}${onlineSection(p)}${footerBlock(p, false)}`;
+      <p class="state-s">Prüfe die Online-Links unten.</p></div>${dailySectionShell()}${nutritionSection(p)}${onlineSection(p)}${footerBlock(p, false)}`;
   } else {
     st = { items, near: near || [], nearRadius: near ? radius : 0, radius, scope: 'all', age: 'cur' };
     const v = priceView(st);
     const toolbar = (v.all.rows.length || userPos) ? toolbarHtml(st, v) : '';
-    bodyHtml = `<div id="hero-wrap">${heroFor(v, true)}</div>${toolbar}`
+    bodyHtml = `<div id="hero-wrap">${heroFor(v, true, st)}</div>${toolbar}`
       + `<div id="plist" class="plist" aria-live="polite">${listContent(st, v, p)}</div>`
-      + nutritionSection(p) + onlineSection(p) + footerBlock(p, !!v.best);
+      + dailySectionShell() + nutritionSection(p) + onlineSection(p) + footerBlock(p, !!v.best);
   }
   showSheet(productHead(p), bodyHtml, {
     back,
@@ -360,6 +428,7 @@ function renderProduct(p, items, back, near = null, radius = 10) {
       runCountUps(b);
       settleLogos(b);
       wireProductBody(b, p, st);
+      if (p.name && p.name !== 'Unbekanntes Produkt') loadDaily(b, { q: p.name, brand: p.brand, qty: p.quantity }, navToken, st);
     },
   });
 }
@@ -405,7 +474,7 @@ function wireProductBody(b, p, st) {
       if (!v.hiddenOld && st.age === 'all') { st.age = 'cur'; setSegUi(ageSeg, 'mode', 'cur'); return render(); }
     }
     if (label) label.textContent = `Händler${v.best ? ` · ${v.current.rows.length}` : ''}`;
-    liquidSwap(heroWrap, heroFor(v, false), () => { runCountUps(heroWrap); settleLogos(heroWrap); });
+    liquidSwap(heroWrap, heroFor(v, false, st), () => { runCountUps(heroWrap); settleLogos(heroWrap); });
     liquidSwap(list, listContent(st, v, p0), () => { runCountUps(list); settleLogos(list); });
   };
 
@@ -555,13 +624,15 @@ function kiView(query, token) {
     return `<a class="shop stagger surface" style="--i:${i}; --sc:${color}" href="${esc(safeUrl(l.url))}" target="_blank" rel="noopener">
       <span class="shop-dot" aria-hidden="true">${esc(ini)}</span><span class="shop-n">${esc(l.label)}<small>${esc(query)}</small></span>${icon('i-ext', 'shop-go')}</a>`;
   }).join('');
-  const bodyHtml = `<section class="block first"><h2 class="label">Preise bei Händlern</h2><div class="shops">${shops}</div>
+  const dpMeta = meta && meta.source === 'coco' ? null : { q: (meta && meta.name) || query, brand: (meta && meta.brand) || '' };
+  const bodyHtml = `${dpMeta ? dailySectionShell('first', '--i:0') : ''}<section class="block${dpMeta ? '' : ' first'}"><h2 class="label">Preise bei Händlern</h2><div class="shops">${shops}</div>
     <p class="hint-s">Echtzeitpreise der Händler werden auf deren Seiten angezeigt.</p></section>
     <section class="block stagger" style="--i:8"><h2 class="label">Passende Produkte in der Datenbank</h2>
     <div id="ki-db" class="ki-db"><div class="skeleton"><div class="sk sk-row"></div><div class="sk sk-row"></div></div></div></section>
     <div class="foot"><p>Der Treffer stammt aus einer automatischen Bilderkennung und kann abweichen.</p></div>`;
   showSheet(kiHead(meta, query), bodyHtml, { snap: 'full', back: false, onInsert: async (h, b) => {
     const box = $('#ki-db', b);
+    if (dpMeta) loadDaily(b, dpMeta, token, null);
     try {
       const list = (await searchProducts(query)).slice(0, 8);
       if (token !== navToken || !box.isConnected) return;
@@ -578,10 +649,13 @@ function kiView(query, token) {
 function settingsView() {
   const ep = getAiEndpoint();
   const bodyHtml = `<div class="set">
-    <div id="set-status" class="status-chip ${ep ? 'on' : ''}"><i></i><span>${ep ? 'KI-Erkennung aktiv' : 'Gratis-Modus'}</span></div>
-    <p class="set-p">Ohne KI-Server erkennt ScanDeals nur allgemeine Kategorien direkt auf dem Handy. Mit einem eigenen Cloudflare Worker erkennt Claude das genaue Produktmodell – deine Daten laufen dann nur über deinen Server.</p>
+    <div class="status-row">
+      <div id="set-status" class="status-chip"><i></i><span>KI-Erkennung: aus</span></div>
+      <div id="set-status-p" class="status-chip"><i></i><span>Tagespreise: aus</span></div>
+    </div>
+    <p class="set-p">Ohne eigenen Server erkennt ScanDeals nur allgemeine Kategorien direkt auf dem Handy. Mit einem eigenen Cloudflare Worker erkennt Claude das genaue Produktmodell, und der Server holt tagesaktuelle Preise aus Onlineshops – deine Daten laufen dann nur über deinen Server.</p>
     <form id="set-form" autocomplete="off" novalidate>
-      <label class="field-l" for="ai-url">KI-Server-URL (Cloudflare Worker)</label>
+      <label class="field-l" for="ai-url">ScanDeals-Server (Cloudflare Worker)</label>
       <input id="ai-url" class="field" type="url" inputmode="url" placeholder="https://scandeals-ai.name.workers.dev" autocapitalize="off" autocorrect="off" spellcheck="false" value="${esc(ep)}">
       <div id="set-result" class="set-result" role="status" aria-live="polite"></div>
       <div class="set-actions">
@@ -590,21 +664,35 @@ function settingsView() {
       </div>
       <button id="set-remove" class="chip" type="button" ${ep ? '' : 'hidden'}>${icon('i-close')}Entfernen</button>
     </form>
-    <a class="link" href="${esc(WORKER_DOCS)}" target="_blank" rel="noopener">Anleitung: KI-Server einrichten ${icon('i-ext')}</a>
+    <a class="link" href="${esc(WORKER_DOCS)}" target="_blank" rel="noopener">Anleitung: Server einrichten ${icon('i-ext')}</a>
   </div>`;
-  showSheet(simpleHead('Einstellungen', 'KI-Erkennung'), bodyHtml, { snap: 'full', onInsert: (h, b) => wireSettings(b) });
+  showSheet(simpleHead('Einstellungen', 'KI-Erkennung und Tagespreise'), bodyHtml, { snap: 'full', onInsert: (h, b) => wireSettings(b) });
 }
 
 function wireSettings(b) {
   const input = $('#ai-url', b), res = $('#set-result', b), chip = $('#set-status', b);
   const show = (kind, msg) => { res.className = 'set-result ' + kind; res.textContent = msg; };
-  const refreshChip = () => {
-    const on = !!getAiEndpoint();
-    chip.classList.toggle('on', on);
-    $('span', chip).textContent = on ? 'KI-Erkennung aktiv' : 'Gratis-Modus';
-    $('#set-remove', b).hidden = !on;
-    updateAiState();
+  const chipP = $('#set-status-p', b);
+  const setChip = (c, label, state) => { // state: true | false | 'busy' | 'down'
+    c.classList.toggle('on', state === true);
+    c.classList.toggle('busy', state === 'busy');
+    $('span', c).textContent = `${label}: ${state === 'busy' ? 'prüfe …' : state === 'down' ? 'nicht erreichbar' : state ? 'aktiv' : 'aus'}`;
   };
+  let chipSeq = 0;
+  const refreshChip = async (force = false) => {
+    const ep = getAiEndpoint();
+    $('#set-remove', b).hidden = !ep;
+    updateAiState();
+    const my = ++chipSeq;
+    if (!ep) { setChip(chip, 'KI-Erkennung', false); setChip(chipP, 'Tagespreise', false); return; }
+    setChip(chip, 'KI-Erkennung', 'busy'); setChip(chipP, 'Tagespreise', 'busy');
+    let h = null;
+    try { h = await getServerHealth(ep, { force }); } catch { /* Server nicht erreichbar */ }
+    if (my !== chipSeq || !b.isConnected) return;
+    setChip(chip, 'KI-Erkennung', h && h.ok ? h.ai : 'down');
+    setChip(chipP, 'Tagespreise', h && h.ok ? h.prices : 'down');
+  };
+  refreshChip();
   const read = () => normalizeEndpoint(input.value);
   $('#set-test', b).onclick = async () => {
     const url = read();
@@ -612,8 +700,11 @@ function wireSettings(b) {
     show('busy', 'Verbindung wird getestet …');
     haptic(8);
     try {
-      const d = await fetchJson(`${url}/health`, 8000);
-      if (d && d.ok) show('ok', `Verbindung ok${d.model ? ' · Modell ' + String(d.model).slice(0, 60) : ''}${d.configured === false ? ' · Schlüssel fehlt noch' : ''}`);
+      const d = await getServerHealth(url, { force: true });
+      if (d && d.ok) {
+        const parts = [`KI ${d.ai ? 'aktiv' : 'aus'}`, `Tagespreise ${d.prices ? 'aktiv' : 'aus'}`];
+        show('ok', `Verbindung ok${d.model ? ' · Modell ' + d.model : ''}${d.configured === false ? ' · Schlüssel fehlt noch' : ''} · ${parts.join(' · ')}`);
+      }
       else show('err', 'Der Server antwortet, ist aber kein ScanDeals-KI-Server.');
     } catch (e) {
       show('err', e && e.timeout ? 'Keine Antwort (Zeitüberschreitung).' : 'Server nicht erreichbar. Prüfe die Adresse und CORS-Einstellungen.');
@@ -625,7 +716,7 @@ function wireSettings(b) {
     if (!url) { setAiEndpoint(''); input.value = ''; show('ok', 'Gratis-Modus aktiv.'); refreshChip(); return; }
     if (!isValidEndpoint(url)) { show('err', 'Bitte eine gültige https://-Adresse eintragen.'); return; }
     setAiEndpoint(url); input.value = url; haptic([12, 40, 18]);
-    show('ok', 'Gespeichert – KI-Erkennung ist aktiv.'); refreshChip();
+    show('ok', 'Gespeichert.'); refreshChip(true);
   };
   $('#set-remove', b).onclick = () => { setAiEndpoint(''); input.value = ''; show('ok', 'Entfernt – Gratis-Modus aktiv.'); refreshChip(); haptic(8); };
 }

@@ -19,6 +19,8 @@ export function getAiEndpoint() {
   try { v = localStorage.getItem(EP_KEY) || ''; } catch { /* ignorieren */ }
   return normalizeEndpoint(v || DEFAULT_AI_ENDPOINT);
 }
+/** Alias: dieselbe URL gilt für KI-Erkennung und Tagespreise (ScanDeals-Server). */
+export const getServerEndpoint = getAiEndpoint;
 export function setAiEndpoint(v) {
   try {
     const n = normalizeEndpoint(v);

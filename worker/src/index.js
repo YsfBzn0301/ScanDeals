@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { lookupPrices, fetchStoresList, OpeError, CACHE_TTL_S, CACHE_TTL_PARTIAL_S } from "./prices.js";
 
 const MAX_BODY_BYTES = 1.5 * 1024 * 1024;
 const RATE_LIMIT = 20; // Anfragen pro Minute und IP (best effort, im Speicher)
@@ -101,7 +102,13 @@ export function mapError(err, origin) {
 
 const defaultMakeClient = (env) => new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
-export function createHandler(makeClient = defaultMakeClient) {
+const defaultFetch = (...args) => globalThis.fetch(...args);
+const defaultCache = () => (typeof caches !== "undefined" ? caches.default : null);
+
+// opts.fetch und opts.cache (null = aus) sind für Tests injizierbar.
+export function createHandler(makeClient = defaultMakeClient, opts = {}) {
+  const fetchFn = opts.fetch || defaultFetch;
+  const getCache = () => ("cache" in opts ? opts.cache : defaultCache());
   const hits = new Map(); // ip -> Zeitstempel[]
 
   function rateLimited(ip) {
@@ -119,6 +126,69 @@ export function createHandler(makeClient = defaultMakeClient) {
     return false;
   }
 
+  function opeFailure(err, origin) {
+    if (err instanceof OpeError && err.kind === "auth") return json({ error: "API-Schlüssel ungültig oder abgelaufen" }, 502, origin);
+    if (err instanceof OpeError && err.kind === "rate") return json({ error: "Zu viele Anfragen, bitte kurz warten" }, 429, origin);
+    return json({ error: "Preisdienst momentan nicht erreichbar" }, 502, origin);
+  }
+
+  async function handleStores(env, origin) {
+    try {
+      return json(await fetchStoresList(fetchFn, env), 200, origin);
+    } catch (err) {
+      return opeFailure(err, origin);
+    }
+  }
+
+  async function handlePrices(url, env, origin) {
+    const clean = (v) => String(v ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+    const q = clean(url.searchParams.get("q"));
+    const brand = clean(url.searchParams.get("brand"));
+    const qty = clean(url.searchParams.get("qty"));
+    if (q.length < 2 || q.length > 120) return json({ error: "Suchbegriff fehlt oder ist ungültig" }, 400, origin);
+    if (brand.length > 60 || qty.length > 60) return json({ error: "Ungültige Anfrage" }, 400, origin);
+    const debugRaw = env.OPE_DEBUG === "true" && url.searchParams.get("raw") === "1";
+
+    let cache = null;
+    let cacheKey = null;
+    if (!debugRaw) {
+      try {
+        cache = getCache();
+        const norm = [q, brand, qty].map((v) => v.toLowerCase());
+        cacheKey = new Request("https://scandeals-cache.invalid/prices?k=" + encodeURIComponent(norm.join("|")));
+        const hit = cache && (await cache.match(cacheKey));
+        if (hit) return json(await hit.json(), 200, origin);
+      } catch {
+        /* Cache ist optional */
+      }
+    }
+
+    let out;
+    try {
+      out = await lookupPrices(fetchFn, env, { q, brand, qty }, { debugRaw });
+    } catch {
+      return json({ error: "Interner Fehler" }, 500, origin);
+    }
+    if (out.fatal) return opeFailure(new OpeError(out.fatal), origin);
+
+    const payload = { query: { q, brand, qty }, fetched_at: new Date().toISOString(), results: out.results, errors: out.errors };
+    if (debugRaw) payload.raw = out.raw;
+    else if (cache && cacheKey && !(out.errors.length && !out.results.length)) {
+      try {
+        const ttl = out.errors.length ? CACHE_TTL_PARTIAL_S : CACHE_TTL_S;
+        await cache.put(
+          cacheKey,
+          new Response(JSON.stringify(payload), {
+            headers: { "Content-Type": "application/json", "Cache-Control": `public, s-maxage=${ttl}` },
+          }),
+        );
+      } catch {
+        /* ignorieren */
+      }
+    }
+    return json(payload, 200, origin);
+  }
+
   return async function handle(request, env) {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin");
@@ -133,7 +203,29 @@ export function createHandler(makeClient = defaultMakeClient) {
     if (origin && !allowed) return json({ error: "Origin nicht erlaubt" }, 403, null);
 
     if (url.pathname === "/health" && request.method === "GET") {
-      return json({ ok: true, model: env.MODEL || "claude-opus-5-5", configured: Boolean(env.ANTHROPIC_API_KEY) }, 200, allowed);
+      return json(
+        {
+          ok: true,
+          model: env.MODEL || "claude-opus-5-5",
+          configured: Boolean(env.ANTHROPIC_API_KEY),
+          features: { ai: Boolean(env.ANTHROPIC_API_KEY), prices: Boolean(env.OPE_API_KEY) },
+        },
+        200,
+        allowed,
+      );
+    }
+
+    if (url.pathname === "/prices/stores" || url.pathname === "/prices") {
+      // /prices/stores darf ohne Origin aufgerufen werden (Einrichtung im Browser).
+      // /prices verbraucht das bezahlte Kontingent: nur von der App aus, außer im Debug-Modus.
+      if (request.method !== "GET") return json({ error: "Methode nicht erlaubt" }, 405, allowed);
+      if (url.pathname === "/prices" && !allowed && env.OPE_DEBUG !== "true") {
+        return json({ error: "Origin nicht erlaubt" }, 403, null);
+      }
+      const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+      if (rateLimited(ip)) return json({ error: "Zu viele Anfragen, bitte kurz warten" }, 429, allowed);
+      if (!env.OPE_API_KEY) return json({ error: "Tagespreise sind nicht eingerichtet" }, 503, allowed);
+      return url.pathname === "/prices/stores" ? handleStores(env, allowed) : handlePrices(url, env, allowed);
     }
 
     if (url.pathname === "/identify") {

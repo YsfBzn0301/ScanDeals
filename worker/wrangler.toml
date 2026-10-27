@@ -7,3 +7,9 @@ compatibility_flags = ["nodejs_compat"]
 # Komma-getrennte Liste erlaubter Origins (exakter Vergleich, ohne Slash am Ende)
 ALLOWED_ORIGINS = "https://ysfbzn0301.github.io,http://localhost:8080"
 MODEL = "claude-opus-5-5"
+
+# Tagespreise (Open Price Engine). Secret setzen mit: npx wrangler secret put OPE_API_KEY
+# Läden als JSON-String. Die Kürzel (slug) per /prices/stores prüfen und anpassen.
+OPE_STORES = '[{"slug":"aldi_sud","name":"Aldi Süd"},{"slug":"lidl","name":"Lidl"},{"slug":"globus","name":"Globus"},{"slug":"alnatura","name":"Alnatura"}]'
+# Optional: OPE_BASE = "https://openpricengine.com/api/v1"
+# Optional: OPE_DEBUG = "true"  (erlaubt /prices?...&raw=1 mit den rohen Antworten)
