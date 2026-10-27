@@ -1,7 +1,7 @@
 // ScanDeals – App-Logik (Routing, Scanner-UI, Bottom-Sheet-Ansichten, Verlauf)
 import {
   getProduct, searchProducts, getPrices, aggregatePrices, formatPrice, formatDate, relativeDate,
-  mapsLinkForBranch, mapsLinkAllBranches, formatNutrient, onlineSearchLinks, reportPriceLink, fetchJson,
+  mapsLinkForBranch, mapsLinkAllBranches, formatNutrient, mergePrices, formatDistance, onlineSearchLinks, reportPriceLink, fetchJson,
 } from './api.js';
 import { openCamera, startBarcodeLoop, stopBarcodeLoop, stopScanner, hasTorch, setTorch } from './scanner.js';
 import { getAiEndpoint, setAiEndpoint, normalizeEndpoint, isValidEndpoint, getMode, setMode, MODES } from './config.js';
@@ -16,6 +16,8 @@ let userPos = null;
 let navToken = 0;
 let prevKind = null;
 const KI_KEY = 'scandeals.ki';
+const RADIUS_KEY = 'scandeals.radiusKm';
+const RADII = [5, 10, 25];
 const WORKER_DOCS = 'https://github.com/YsfBzn0301/ScanDeals/tree/main/worker';
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
@@ -45,8 +47,26 @@ const thumb = (p, size = '') => `<span class="thumb ${size}">${icon('i-bag')}${
 
 // Defekte Bilder ausblenden (Fehler-Events bubblen nicht → Capture)
 document.addEventListener('error', (e) => {
-  if (e.target && e.target.classList && e.target.classList.contains('thumb-img')) e.target.remove();
+  const c = e.target && e.target.classList;
+  if (c && (c.contains('thumb-img') || c.contains('lg-img'))) e.target.remove(); // Händler-Logo: Initial-Kachel bleibt stehen
 }, true);
+document.addEventListener('load', (e) => {
+  if (e.target && e.target.classList && e.target.classList.contains('lg-img')) e.target.classList.add('ok');
+}, true);
+const settleLogos = (root) => root.querySelectorAll('img.lg-img').forEach((i) => { if (i.complete && i.naturalWidth) i.classList.add('ok'); });
+
+function loadRadius() {
+  try { const v = Number(localStorage.getItem(RADIUS_KEY)); return RADII.includes(v) ? v : 10; } catch { return 10; }
+}
+function saveRadius(v) { try { localStorage.setItem(RADIUS_KEY, String(v)); } catch { /* ignorieren */ } }
+
+/** Runde Händler-Kachel: Logo (falls geladen) über der Initiale bzw. dem Globus (Online). */
+function logoTile(r, cls = '') {
+  const online = r.type === 'ONLINE';
+  const ini = ((r.name || '?').trim().charAt(0) || '?').toUpperCase();
+  const img = !online && r.logo ? `<img class="lg-img" src="${esc(r.logo)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">` : '';
+  return `<span class="lg-tile ${cls}" aria-hidden="true">${online ? icon('i-globe') : `<b>${esc(ini)}</b>`}${img}</span>`;
+}
 
 const subOf = (p) => [p.brand, p.quantity].filter(Boolean).join(' · ');
 
@@ -142,8 +162,9 @@ function priceRowHtml(r, best, i) {
   const place = r.type === 'ONLINE' ? 'Online-Shop' : (r.city || 'Ladengeschäft');
   const rel = r.date ? relativeDate(r.date) : '';
   const was = r.discounted && r.priceWithout ? `<s>${esc(formatPrice(r.priceWithout, r.currency))}</s>` : '';
-  const main = `<div class="pc-l"><span class="pc-name">${esc(r.name)}</span>
-      <span class="pc-meta">${esc(place)}${rel ? ` · ${esc(rel)}` : ''}</span>
+  const dist = isFinite(r.distanceKm) ? `<span class="dist">${icon('i-pin')}${esc(formatDistance(r.distanceKm))}</span>` : '';
+  const main = `${logoTile(r)}<div class="pc-l"><span class="pc-name">${esc(r.name)}</span>
+      <span class="pc-meta">${esc(place)}${rel ? ` · ${esc(rel)}` : ''}${dist}</span>
       <span class="pc-badges">${badges(r, best)}</span></div>
     <div class="pc-r"><span class="pc-price" data-price="${r.price}" data-cur="${esc(r.currency)}">${esc(formatPrice(r.price, r.currency))}</span>${was}</div>`;
   const cls = `pcard surface stagger${best ? ' is-best' : ''}`;
@@ -210,14 +231,14 @@ function footerBlock(p, withReport) {
     <p>Quelle: Open Prices / Open Food Facts (Community, ODbL). Preise können abweichen.</p></div>`;
 }
 
-function heroHtml(best, cheapest, priciest) {
+function heroHtml(best, cheapest, priciest, anim = true) {
   const diff = priciest.price - cheapest.price;
   const save = diff > 0.004 ? `bis zu ${esc(formatPrice(diff, cheapest.currency))} günstiger` : 'Einziger aktueller Preis';
   const when = cheapest.date ? relativeDate(cheapest.date) : '';
-  return `<section class="hero stagger" style="--i:0" aria-label="Bestpreis">
+  return `<section class="hero${anim ? ' stagger' : ''}" style="--i:0" aria-label="Bestpreis">
     <div class="hero-top"><span class="badge best big">Bestpreis</span><span class="hero-when">${esc(when)}</span></div>
     <div class="hero-price" data-price="${best.price}" data-cur="${esc(best.currency)}">${esc(formatPrice(best.price, best.currency))}</div>
-    <div class="hero-shop">${esc(best.name)}${best.city && best.type !== 'ONLINE' ? `<span> · ${esc(best.city)}</span>` : ''}</div>
+    <div class="hero-shop">${logoTile(best, 'sm')}<div class="hero-shop-t">${esc(best.name)}${best.city && best.type !== 'ONLINE' ? `<span> · ${esc(best.city)}</span>` : ''}${isFinite(best.distanceKm) ? `<span class="dist">${icon('i-pin')}${esc(formatDistance(best.distanceKm))}</span>` : ''}</div></div>
     <div class="hero-save">${icon('i-arrow', 'down')}${save}</div></section>`;
 }
 
@@ -231,14 +252,17 @@ async function productView(code, token) {
   const back = ['suche', 'verlauf', 'ki'].includes(prevKind);
   await showSheet(skeletonHead(), skeleton(), { snap: 'half', back });
   try {
-    const [product, items] = await Promise.all([
+    const radius = loadRadius();
+    const [product, items, near] = await Promise.all([
       getProduct(code),
       getPrices(code).catch((e) => { if (!navigator.onLine) throw e; return null; }),
+      // Standort schon bekannt (nur im Speicher): Preise im Umkreis gleich mitladen
+      userPos ? getPrices(code, { ...userPos, radiusKm: radius }).catch(() => null) : null,
     ]);
     if (token !== navToken) return;
     const p = product || { code, name: 'Unbekanntes Produkt', brand: '', quantity: '', image: '' };
     if (product) { saveHistory(p); renderRecent(); }
-    renderProduct(p, items, back);
+    renderProduct(p, items, back, near, radius);
   } catch (e) {
     if (token !== navToken) return;
     await showSheet(skeletonHead(), errorBody(errText(e)), {
@@ -248,50 +272,99 @@ async function productView(code, token) {
   }
 }
 
-function renderProduct(p, items, back) {
+// Standort einmalig anfragen (nur im Speicher halten, nicht persistieren)
+function requestPos() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) { resolve(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        userPos = { lat: +pos.coords.latitude.toFixed(4), lon: +pos.coords.longitude.toFixed(4) };
+        resolve(userPos);
+      },
+      () => resolve(null),
+      { timeout: 10000, maximumAge: 300000 },
+    );
+  });
+}
+
+/** Aktuelle Auswahl (Ort × Alter) aus dem Zustand ableiten. */
+function priceView(st) {
+  const items = mergePrices(st.items, st.near);
+  const o = { userPos, maxKm: st.scope === 'near' ? st.radius : null };
+  const current = aggregatePrices(items, { ...o, includeOld: false });
+  const all = aggregatePrices(items, { ...o, includeOld: true });
+  return {
+    current, all, rows: (st.age === 'all' ? all : current).rows,
+    best: current.rows[0] || null, hiddenOld: current.hiddenOld,
+  };
+}
+
+function heroFor(v, anim) {
+  return v.best ? heroHtml(v.best, v.best, v.current.rows[v.current.rows.length - 1], anim) : '';
+}
+
+function listContent(st, v, p) {
+  if (v.rows.length) return listHtml(v.rows, v.best ? v.best.name : null);
+  if (st.scope === 'near') {
+    const more = st.radius < 25;
+    return `<div class="state surface">${icon('i-pin', 'state-ico')}
+      <p class="state-t">Keine Preise im Umkreis von ${st.radius} km</p>
+      <p class="state-s">${more ? 'Radius vergrößern?' : 'Wechsle auf „Überall“, um alle Händler zu sehen.'}</p>
+      ${more ? '<button class="btn primary" type="button" data-km="25">25 km</button>' : ''}</div>`;
+  }
+  if (st.age === 'cur' && v.hiddenOld) {
+    return `<div class="state surface"><p class="state-t">Keine aktuellen Preise.</p><p class="state-s">Wechsle auf „Alle“, um ältere Meldungen zu sehen.</p></div>`;
+  }
+  return `<div class="state surface stagger" style="--i:1">${icon('i-bag', 'state-ico')}
+    <p class="state-t">Noch keine aktuellen Preise gemeldet.</p>
+    <p class="state-s">Für dieses Produkt gibt es noch keine ${st.items.length ? 'aktuellen ' : ''}Preise in der Community-Datenbank. Schau online nach – oder melde selbst einen Preis.</p>
+    <a class="btn primary" href="${esc(reportPriceLink(p.code))}" target="_blank" rel="noopener">Preis selbst melden</a></div>`;
+}
+
+function toolbarHtml(st, v) {
+  const near = st.scope === 'near';
+  return `<div class="toolbar stagger" style="--i:1">
+    <div class="seg" id="age-seg" role="group" aria-label="Preise filtern" data-mode="cur"${v.hiddenOld ? '' : ' hidden'}>
+      <span class="seg-thumb" aria-hidden="true"></span>
+      <button type="button" data-mode="cur" aria-pressed="true">Aktuell</button>
+      <button type="button" data-mode="all" aria-pressed="false">Alle (inkl. älter)</button></div>
+    <div class="scope">
+      <div class="seg" id="scope-seg" role="group" aria-label="Ort" data-scope="${near ? 'near' : 'all'}">
+        <span class="seg-thumb" aria-hidden="true"></span>
+        <button type="button" data-scope="all" aria-pressed="${!near}">Überall</button>
+        <button type="button" data-scope="near" aria-pressed="${near}">In der Nähe</button></div>
+      <div class="radius${near ? ' open' : ''}" id="radius"><div><div class="radius-in" role="group" aria-label="Umkreis">
+        <span class="radius-l">Umkreis</span>${RADII.map((km) => `<button class="chip rad" type="button" data-km="${km}" aria-pressed="${km === st.radius}">${km} km</button>`).join('')}</div></div></div>
+      <p class="near-hint" id="near-hint" role="status" hidden></p></div>
+    <div class="list-head"><h2 class="label" id="plist-label">Händler${v.best ? ` · ${v.current.rows.length}` : ''}</h2>
+      <button class="chip geo${userPos ? ' on' : ''}" id="geo" type="button">${icon('i-pin')}<span>${userPos ? 'Standort aktiv' : 'Standort nutzen'}</span></button></div></div>`;
+}
+
+function renderProduct(p, items, back, near = null, radius = 10) {
   let bodyHtml;
-  let current = null, all = null, best = null;
+  let st = null;
   if (items === null) {
     bodyHtml = `<div class="state surface">${icon('i-alert', 'state-ico')}<p class="state-t">Preise gerade nicht verfügbar.</p>
       <p class="state-s">Prüfe die Online-Links unten.</p></div>${nutritionSection(p)}${onlineSection(p)}${footerBlock(p, false)}`;
   } else {
-    current = aggregatePrices(items, { includeOld: false });
-    all = aggregatePrices(items, { includeOld: true });
-    best = current.rows[0] || null;
-    const toolbar = `<div class="toolbar stagger" style="--i:1">
-      ${current.hiddenOld ? `<div class="seg" role="group" aria-label="Preise filtern" data-mode="cur">
-        <span class="seg-thumb" aria-hidden="true"></span>
-        <button type="button" data-mode="cur" aria-pressed="true">Aktuell</button>
-        <button type="button" data-mode="all" aria-pressed="false">Alle (inkl. älter)</button></div>` : ''}
-      <div class="list-head"><h2 class="label">Händler${best ? ` · ${current.rows.length}` : ''}</h2>
-        <button class="chip geo" id="geo" type="button">${icon('i-pin')}<span>${userPos ? 'Standort aktiv' : 'Standort nutzen'}</span></button></div></div>`;
-    if (best) {
-      const rows = current.rows;
-      const priciest = rows[rows.length - 1];
-      bodyHtml = heroHtml(best, best, priciest)
-        + toolbar
-        + `<div id="plist" class="plist" aria-live="polite">${listHtml(rows, best.name)}</div>`
-        + nutritionSection(p) + onlineSection(p) + footerBlock(p, true);
-    } else {
-      bodyHtml = `${all.rows.length ? toolbar : ''}<div id="plist" class="plist">
-        <div class="state surface stagger" style="--i:1">${icon('i-bag', 'state-ico')}
-        <p class="state-t">Noch keine aktuellen Preise gemeldet.</p>
-        <p class="state-s">Für dieses Produkt gibt es noch keine ${items.length ? 'aktuellen ' : ''}Preise in der Community-Datenbank. Schau online nach – oder melde selbst einen Preis.</p>
-        <a class="btn primary" href="${esc(reportPriceLink(p.code))}" target="_blank" rel="noopener">Preis selbst melden</a></div></div>`
-        + nutritionSection(p) + onlineSection(p) + footerBlock(p, false);
-    }
+    st = { items, near: near || [], nearRadius: near ? radius : 0, radius, scope: 'all', age: 'cur' };
+    const v = priceView(st);
+    const toolbar = (v.all.rows.length || userPos) ? toolbarHtml(st, v) : '';
+    bodyHtml = `<div id="hero-wrap">${heroFor(v, true)}</div>${toolbar}`
+      + `<div id="plist" class="plist" aria-live="polite">${listContent(st, v, p)}</div>`
+      + nutritionSection(p) + onlineSection(p) + footerBlock(p, !!v.best);
   }
   showSheet(productHead(p), bodyHtml, {
     back,
     onInsert: (h, b) => {
       runCountUps(b);
-      wireProductBody(b, p, items, current, all, best);
+      settleLogos(b);
+      wireProductBody(b, p, st);
     },
   });
 }
 
-function wireProductBody(b, p, items, current, all, best) {
-  const list = $('#plist', b);
+function wireProductBody(b, p, st) {
   wireNutrition(b, p);
   // Karten auf-/zuklappen (smooth height via grid-rows)
   b.onclick = (e) => {
@@ -305,41 +378,142 @@ function wireProductBody(b, p, items, current, all, best) {
     if (open && getSnap() === 'half') snapTo('full');
     if (open) setTimeout(() => card.scrollIntoView({ block: 'nearest', behavior: isReduced() ? 'auto' : 'smooth' }), 260);
   };
-  // Segment: Aktuell | Alle
-  const seg = $('.toolbar .seg', b);
-  if (seg && list) {
-    let mode = 'cur';
-    seg.addEventListener('click', (e) => {
+  if (!st) return;
+  const list = $('#plist', b), heroWrap = $('#hero-wrap', b);
+  const ageSeg = $('#age-seg', b), scopeSeg = $('#scope-seg', b), radiusBox = $('#radius', b);
+  const hint = $('#near-hint', b), geo = $('#geo', b), label = $('#plist-label', b);
+  const p0 = p;
+
+  const showHint = (msg) => { if (!hint) return; hint.textContent = msg || ''; hint.hidden = !msg; };
+  const setSegUi = (seg, key, val) => {
+    seg.dataset[key] = val;
+    seg.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset[key] === val)));
+  };
+  const geoUi = () => {
+    if (!geo) return;
+    $('span', geo).textContent = 'Standort aktiv';
+    geo.classList.add('on');
+    b.querySelectorAll('a[data-act="all"]').forEach((a) => { a.href = mapsLinkAllBranches(a.dataset.brand, userPos); });
+  };
+
+  // Liste + Hero gemäß Auswahl neu zeichnen (Liquid-Fade)
+  const render = () => {
+    if (!b.isConnected || !list) return;
+    const v = priceView(st);
+    if (ageSeg) {
+      ageSeg.hidden = !v.hiddenOld;
+      if (!v.hiddenOld && st.age === 'all') { st.age = 'cur'; setSegUi(ageSeg, 'mode', 'cur'); return render(); }
+    }
+    if (label) label.textContent = `Händler${v.best ? ` · ${v.current.rows.length}` : ''}`;
+    liquidSwap(heroWrap, heroFor(v, false), () => { runCountUps(heroWrap); settleLogos(heroWrap); });
+    liquidSwap(list, listContent(st, v, p0), () => { runCountUps(list); settleLogos(list); });
+  };
+
+  // Umkreis-Abruf: entprellt, laufende Anfrage wird abgebrochen. -> 'ok' | 'stale' | 'fail'
+  let seq = 0, ctrl = null;
+  const loadNear = async (delay = 0) => {
+    const my = ++seq;
+    if (ctrl) ctrl.abort();
+    const c = ctrl = new AbortController();
+    if (delay) await sleep(delay);
+    if (my !== seq) return 'stale';
+    const radius = st.radius;
+    try {
+      const got = await getPrices(p0.code, { ...userPos, radiusKm: radius, signal: c.signal });
+      if (my !== seq) return 'stale';
+      st.near = mergePrices(st.near, got);
+      st.nearRadius = Math.max(st.nearRadius, radius);
+      return 'ok';
+    } catch (e) {
+      return my !== seq || (e && e.aborted) ? 'stale' : 'fail';
+    }
+  };
+
+  const setRadiusUi = () => b.querySelectorAll('.chip.rad').forEach((x) => x.setAttribute('aria-pressed', String(Number(x.dataset.km) === st.radius)));
+  const applyScope = (next) => {
+    st.scope = next;
+    if (scopeSeg) setSegUi(scopeSeg, 'scope', next);
+    if (radiusBox) radiusBox.classList.toggle('open', next === 'near');
+    render();
+  };
+
+  const setScope = async (next) => {
+    if (next === st.scope) return;
+    haptic(8);
+    if (next === 'all') { showHint(''); applyScope('all'); return; }
+    if (!userPos) {
+      showHint('Standort wird ermittelt …');
+      const pos = await requestPos();
+      if (!b.isConnected) return;
+      if (!pos) {
+        showHint('Ohne Standort kann ich keine Preise in der Nähe zeigen. Erlaube den Standortzugriff und tippe es noch einmal an.');
+        if (geo) $('span', geo).textContent = 'Standort verweigert';
+        return;
+      }
+      geoUi();
+    }
+    if (st.nearRadius < st.radius) {
+      showHint('Preise in der Nähe werden gesucht …');
+      const r = await loadNear(0);
+      if (!b.isConnected || r === 'stale') return;
+      if (r === 'fail') { showHint('Preise in der Nähe konnten nicht geladen werden.'); return; }
+    }
+    showHint('');
+    applyScope('near');
+  };
+
+  const setRadius = (km) => {
+    if (!RADII.includes(km) || km === st.radius) return;
+    haptic(8);
+    st.radius = km;
+    saveRadius(km);
+    setRadiusUi();
+    if (st.scope !== 'near') return;
+    list.classList.add('is-loading');
+    loadNear(250).then((r) => {
+      if (!b.isConnected || r === 'stale') return;
+      list.classList.remove('is-loading');
+      showHint(r === 'fail' ? 'Umkreis konnte nicht aktualisiert werden.' : '');
+      render();
+    });
+  };
+
+  if (ageSeg) {
+    ageSeg.addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-mode]');
-      if (!btn || btn.dataset.mode === mode) return;
-      mode = btn.dataset.mode;
+      if (!btn || btn.dataset.mode === st.age) return;
       haptic(8);
-      seg.dataset.mode = mode;
-      seg.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === btn)));
-      const rows = (mode === 'all' ? all : current).rows;
-      const html = rows.length ? listHtml(rows, best ? best.name : null)
-        : `<div class="state surface"><p class="state-t">Keine aktuellen Preise.</p><p class="state-s">Wechsle auf „Alle“, um ältere Meldungen zu sehen.</p></div>`;
-      liquidSwap(list, html, () => runCountUps(list));
+      st.age = btn.dataset.mode;
+      setSegUi(ageSeg, 'mode', st.age);
+      render();
     });
   }
-  const geo = $('#geo', b);
+  if (scopeSeg) scopeSeg.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-scope]');
+    if (btn) setScope(btn.dataset.scope);
+  });
+  if (radiusBox) radiusBox.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-km]');
+    if (btn) setRadius(Number(btn.dataset.km));
+  });
+  // Leerzustand: „25 km“
+  list.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-km]');
+    if (btn) setRadius(Number(btn.dataset.km));
+  });
+
   if (geo) {
-    const label = $('span', geo);
-    geo.onclick = () => {
-      if (!navigator.geolocation) { label.textContent = 'Standort nicht verfügbar'; return; }
-      label.textContent = 'Standort wird ermittelt …';
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          userPos = { lat: +pos.coords.latitude.toFixed(4), lon: +pos.coords.longitude.toFixed(4) };
-          label.textContent = 'Standort aktiv';
-          geo.classList.add('on');
-          b.querySelectorAll('a[data-act="all"]').forEach((a) => { a.href = mapsLinkAllBranches(a.dataset.brand, userPos); });
-        },
-        () => { label.textContent = 'Standort verweigert'; },
-        { timeout: 10000, maximumAge: 300000 },
-      );
+    const lbl = $('span', geo);
+    geo.onclick = async () => {
+      if (!navigator.geolocation) { lbl.textContent = 'Standort nicht verfügbar'; return; }
+      lbl.textContent = 'Standort wird ermittelt …';
+      const pos = await requestPos();
+      if (!b.isConnected) return;
+      if (!pos) { lbl.textContent = 'Standort verweigert'; return; }
+      geoUi();
+      if (st.nearRadius < st.radius) await loadNear(0);
+      render(); // Entfernungen einblenden
     };
-    if (userPos) geo.classList.add('on');
   }
 }
 

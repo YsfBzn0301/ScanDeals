@@ -3,10 +3,11 @@
 //   App-Shell (index.html, styles.css, js/*, manifest, Icons): cache-first mit Hintergrund-Update
 //   Navigationen (offline): gecachte index.html
 //   Open Food Facts / Open Prices (*.openfoodfacts.org): network-first, Fallback Cache
+//   Händler-Logos (raw.githubusercontent.com): stale-while-revalidate, nur 200er (404/Opaque nie gecacht)
 //   alles andere (z. B. CDN-Module, TF-Modellgewichte): stale-while-revalidate
 //   *.workers.dev (KI-Server) und alle Nicht-GET-Requests: nie gecacht, direkt ans Netz
 
-const CACHE = 'scandeals-v5';
+const CACHE = 'scandeals-v6';
 
 const SHELL = [
   './',
@@ -33,6 +34,7 @@ const SHELL = [
 const SHELL_URLS = new Set(SHELL.map((p) => new URL(p, self.location.href).href));
 const API_HOST = /(^|\.)openfoodfacts\.org$/;
 const WORKER_HOST = 'workers.dev';
+const LOGO_HOST = 'raw.githubusercontent.com';
 
 function stripSearch(url) {
   const u = new URL(url);
@@ -126,6 +128,30 @@ async function staleWhileRevalidate(event) {
   }
 }
 
+// Händler-Logos: <img> sendet no-cors (opake Antwort, Status unlesbar) – daher per CORS neu abrufen,
+// damit Fehlantworten (404 bei fehlender Marken-Datei) erkannt und NICHT gecacht werden.
+async function logoResponse(event) {
+  const req = event.request;
+  const cache = await caches.open(CACHE);
+  const key = req.url;
+  const cached = await cache.match(key);
+
+  const network = fetch(key, { mode: 'cors', credentials: 'omit' }).then((res) => {
+    if (res.status === 200) cache.put(key, res.clone()).catch(() => {});
+    return res;
+  });
+
+  if (cached) {
+    event.waitUntil(network.catch(() => {}));
+    return cached;
+  }
+  try {
+    return await network;
+  } catch (err) {
+    return Response.error();
+  }
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   // Nur GET wird behandelt; POST & Co. gehen unverändert ans Netz
@@ -146,6 +172,12 @@ self.addEventListener('fetch', (event) => {
   // Open Food Facts / Open Prices: network-first
   if (API_HOST.test(url.hostname)) {
     event.respondWith(networkFirst(req));
+    return;
+  }
+
+  // Marken-Logos (Bilder) von GitHub Raw
+  if (url.hostname === LOGO_HOST) {
+    event.respondWith(logoResponse(event));
     return;
   }
 

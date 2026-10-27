@@ -356,8 +356,10 @@ html.ai-on .ai-dot { opacity: 1; transform: scale(1); }
 .hero-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .hero-when { font-size: 13px; color: #B7C2D0; }
 .hero-price { font-size: clamp(48px, 15vw, 64px); font-weight: 800; letter-spacing: -.035em; line-height: 1; color: var(--green); margin: 14px 0 8px; font-variant-numeric: tabular-nums; text-shadow: 0 0 28px rgba(34, 245, 160, .35); }
-.hero-shop { font-size: 17px; font-weight: 650; overflow-wrap: anywhere; }
-.hero-shop span { font-weight: 400; color: #B7C2D0; font-size: 15px; }
+.hero-shop { display: flex; align-items: center; gap: 12px; font-size: 17px; font-weight: 650; }
+.hero-shop-t { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.hero-shop-t > span:not(.dist) { font-weight: 400; color: #B7C2D0; font-size: 15px; }
+.hero-shop .dist { margin: 0 0 0 8px; }
 .hero-save { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 14px; color: #A9F5D4; }
 .hero-save svg { width: 18px; height: 18px; transform: rotate(90deg); }
 
@@ -375,7 +377,33 @@ html.ai-on .ai-dot { opacity: 1; transform: scale(1); }
 .seg[data-mode="all"] .seg-thumb { transform: translate3d(100%, 0, 0); }
 .seg button { position: relative; z-index: 1; min-height: 40px; border: 0; background: none; border-radius: 20px; font-size: 14px; font-weight: 650; color: var(--muted); cursor: pointer; transition: color .25s; padding: 0 8px; }
 .seg button[aria-pressed="true"] { color: var(--text); }
-.seg[data-mode="serving"] .seg-thumb { transform: translate3d(100%, 0, 0); }
+.seg[data-mode="serving"] .seg-thumb, .seg[data-scope="near"] .seg-thumb { transform: translate3d(100%, 0, 0); }
+
+/* Ort-Filter + Umkreis */
+.scope { display: flex; flex-direction: column; }
+.radius { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows .4s var(--ease-out), opacity .3s; }
+.radius.open { grid-template-rows: 1fr; opacity: 1; }
+.radius > div { overflow: hidden; min-height: 0; }
+.radius-in { display: flex; align-items: center; gap: 8px; padding-top: 12px; }
+.radius:not(.open) .radius-in { visibility: hidden; }
+.radius-l { font-size: 13px; font-weight: 600; color: var(--muted); margin-right: 2px; }
+.chip.rad { min-height: 40px; padding: 0 14px; }
+.chip.rad[aria-pressed="true"] { border-color: rgba(0, 229, 255, .55); background: rgba(0, 229, 255, .12); color: #A5F4FF; }
+.near-hint { margin-top: 10px; padding: 10px 14px; border-radius: 16px; font-size: 13px; line-height: 1.4; color: #E3C8FF; background: rgba(168, 85, 247, .14); border: 1px solid rgba(168, 85, 247, .3); }
+.plist { transition: opacity .25s; }
+.plist.is-loading { opacity: .55; }
+
+/* Händler-Logos & Entfernung */
+.lg-tile { position: relative; display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 50%; overflow: hidden; margin-top: 1px;
+  color: var(--text); font-size: 16px; background: linear-gradient(145deg, rgba(255, 255, 255, .20), rgba(255, 255, 255, .06)); border: 1px solid rgba(255, 255, 255, .16); }
+.lg-tile b { font-weight: 750; line-height: 1; }
+.lg-tile svg { width: 52%; height: 52%; color: #8BF1FF; }
+.lg-tile.sm { width: 36px; height: 36px; margin-top: 0; }
+.lg-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #fff; padding: 5px; border-radius: 50%; opacity: 0; transition: opacity .3s; }
+.lg-img.ok { opacity: 1; }
+.dist { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 9px 0 7px; margin-left: 8px; border-radius: 11px; vertical-align: middle; white-space: nowrap;
+  font-size: 12px; font-weight: 650; color: #A5F4FF; background: rgba(0, 229, 255, .12); border: 1px solid rgba(0, 229, 255, .3); }
+.dist svg { width: 12px; height: 12px; }
 /* ---------- Nährwerte ---------- */
 .nw-card { padding: 14px 16px 12px; border-radius: var(--r-md); display: flex; flex-direction: column; gap: 10px; }
 .nw-seg button { min-height: 36px; font-size: 13px; padding: 0 6px; }
