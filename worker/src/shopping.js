@@ -159,12 +159,12 @@ export function buildResults(offers, query, { skipScore = false } = {}) {
 
 // ---------- SerpApi-Aufruf ----------
 
-export async function lookupShopping(fetchFn, env, { q, brand, qty, gtin }) {
+export async function lookupShopping(fetchFn, env, { q, brand, qty, gtin }, apiKey = env.SERPAPI_KEY) {
   const term = buildShoppingTerm({ q, brand, qty, gtin });
   const params = new URLSearchParams({
     engine: "google_shopping",
     q: term,
-    api_key: env.SERPAPI_KEY,
+    api_key: apiKey,
     gl: "de",
     hl: "de",
     google_domain: "google.de",

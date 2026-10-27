@@ -1,4 +1,5 @@
 // ScanDeals – Datenzugriff und reine Hilfsfunktionen
+import { getSerpKey } from './config.js';
 export const OFF_FIELDS = 'code,product_name,product_name_de,brands,quantity,image_front_small_url';
 export const OFF_FIELDS_DETAIL = OFF_FIELDS + ',nutriments,nutrition_data_per,serving_size,serving_quantity';
 // API v3.6 (Produktabruf per Barcode); nutrition = neue Nährwert-Struktur, selected_images = Bild-URLs
@@ -14,7 +15,7 @@ export const PRICES_URL = 'https://prices.openfoodfacts.org/api/v1/prices';
 export const TIMEOUT_MS = 12000;
 const MAX_AGE_MONTHS = 12;
 
-export async function fetchJson(url, timeout = TIMEOUT_MS, signal) {
+export async function fetchJson(url, timeout = TIMEOUT_MS, signal, extraHeaders) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeout);
   if (signal) {
@@ -22,10 +23,11 @@ export async function fetchJson(url, timeout = TIMEOUT_MS, signal) {
     else signal.addEventListener('abort', () => ctrl.abort(), { once: true });
   }
   try {
-    const res = await fetch(url, { signal: ctrl.signal, headers: { Accept: 'application/json' } });
+    const res = await fetch(url, { signal: ctrl.signal, headers: { Accept: 'application/json', ...(extraHeaders || {}) } });
     if (!res.ok) {
       const err = new Error('HTTP ' + res.status);
       err.status = res.status;
+      try { const b = await res.json(); if (b && typeof b === 'object') { err.code = typeof b.code === 'string' ? b.code : ''; err.quota = b.quota; err.serverMessage = typeof b.error === 'string' ? b.error : ''; } } catch { /* kein JSON */ }
       throw err;
     }
     return await res.json();
@@ -641,16 +643,20 @@ export async function getDailyPrices(endpoint, { q, brand, qty } = {}, { signal,
 }
 
 /** Echtzeitpreise aus Google Shopping (SerpApi über den eigenen Server): GET {endpoint}/shopping. */
-export async function getShoppingPrices(endpoint, { q, brand, qty, gtin } = {}, { signal, timeout = 20000 } = {}) {
+export async function getShoppingPrices(endpoint, { q, brand, qty, gtin } = {}, { signal, timeout = 20000, cachedOnly = false } = {}) {
   const params = new URLSearchParams();
   if (q) params.set('q', String(q));
   if (brand) params.set('brand', String(brand));
   if (qty) params.set('qty', String(qty));
   if (gtin) params.set('gtin', String(gtin));
-  const data = await fetchJson(`${endpoint}/shopping?${params}`, timeout, signal);
+  if (cachedOnly) params.set('cached_only', '1');
+  const key = getSerpKey();
+  const data = await fetchJson(`${endpoint}/shopping?${params}`, timeout, signal, key ? { 'X-SerpApi-Key': key } : undefined);
+  const quota = normQuota(data && data.quota);
+  if (cachedOnly && data && typeof data === 'object' && !Array.isArray(data.results)) return { results: null, cached: false, quota };
   if (!data || typeof data !== 'object' || !Array.isArray(data.results)) throw new Error('Ungültige Antwort');
   const num = (v) => (v === null || v === undefined || v === '' ? NaN : Number(v));
-  return data.results.map((r) => {
+  const results = data.results.map((r) => {
     const old = num(r.old_price);
     const pack = Math.floor(num(r.pack));
     const score = num(r.score);
@@ -672,6 +678,57 @@ export async function getShoppingPrices(endpoint, { q, brand, qty, gtin } = {}, 
       date: '',
     };
   }).filter((r) => r.store && isFinite(r.price) && r.price > 0).sort((a, b) => a.price - b.price);
+  return { results, cached: data.cached === true, quota };
+}
+
+// ----- Kontingent (SerpApi) -----
+const QUOTA_KEY = 'scandeals.quota';
+const QUOTA_TTL = 5 * 60 * 1000;
+
+/** Kontingent-Objekt des Servers → {source:'user'|'server', plan, perMonth, left, used, renews, warn, exhausted} oder null. */
+export function normQuota(q) {
+  if (!q || typeof q !== 'object') return null;
+  const n = (v) => (v === null || v === undefined || v === '' ? NaN : Number(v));
+  const left = n(q.left);
+  if (!isFinite(left)) return null;
+  const per = n(q.per_month), used = n(q.used);
+  const renews = typeof q.renews === 'string' && !isNaN(Date.parse(q.renews)) ? q.renews : '';
+  return {
+    source: q.key_source === 'user' ? 'user' : 'server',
+    plan: String(q.plan_name || '').slice(0, 60),
+    perMonth: isFinite(per) ? per : NaN,
+    left: Math.max(0, Math.floor(left)),
+    used: isFinite(used) ? used : NaN,
+    renews,
+    warn: q.warn === true,
+    exhausted: q.exhausted === true || left <= 0,
+  };
+}
+
+/** Gecachtes Kontingent für den aktuellen Server/Schlüssel (5 min, sessionStorage) oder null. */
+export function readQuotaCache(endpoint) {
+  try {
+    const c = JSON.parse(sessionStorage.getItem(QUOTA_KEY) || 'null');
+    if (c && c.ep === endpoint && c.own === !!getSerpKey() && Date.now() - c.ts < QUOTA_TTL) return c.data;
+  } catch { /* ignorieren */ }
+  return null;
+}
+export function writeQuotaCache(endpoint, data) {
+  try {
+    if (data) sessionStorage.setItem(QUOTA_KEY, JSON.stringify({ ep: endpoint, own: !!getSerpKey(), ts: Date.now(), data }));
+    else sessionStorage.removeItem(QUOTA_KEY);
+  } catch { /* ignorieren */ }
+}
+
+/** Kontingent vom Server (GET /shopping/quota). key: undefined = gespeicherter Schlüssel, '' = Server-Schlüssel erzwingen. Wirft bei Fehlern. */
+export async function getShoppingQuota(endpoint, { key, force = false, cache = true, timeout = 8000, signal } = {}) {
+  const k = key === undefined ? getSerpKey() : key;
+  if (cache && !force && key === undefined) { const c = readQuotaCache(endpoint); if (c) return c; }
+  const d = await fetchJson(`${endpoint}/shopping/quota`, timeout, signal, k ? { 'X-SerpApi-Key': k } : undefined);
+  const q = normQuota(d);
+  if (!q) throw new Error('Ungültige Antwort');
+  if (cache && key === undefined) writeQuotaCache(endpoint, q);
+  return q;
 }
 
 /** Händler-Logo wie bei Open Prices (Open-Food-Facts-Markenbilder); Slug = Name klein, ohne Umlaut-Akzente, sonst '-'. */

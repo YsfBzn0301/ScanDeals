@@ -17,3 +17,9 @@ OPE_STORES = '[{"slug":"aldi_sud","name":"Aldi Süd"},{"slug":"lidl","name":"Lid
 # Echtzeitpreise (SerpApi / Google Shopping). Secret setzen mit: npx wrangler secret put SERPAPI_KEY
 # Optional: SERP_CACHE_HOURS = "12"   (Cache-Dauer in Stunden, spart Suchen)
 # Optional: SERP_LOCATION = "Germany"
+
+# Kontingent-Warnung (SerpApi). Alle optional, Defaults in Klammern.
+# Warnung, wenn verbleibende Suchen <= max(SERP_WARN_MIN, SERP_WARN_PERCENT % des Monatskontingents)
+# SERP_WARN_PERCENT = "20"   (Standard 20)
+# SERP_WARN_MIN = "25"       (Standard 25)
+# SERP_RESERVE = "0"         (Suchen, die nie verbraucht werden, z. B. 5 als Puffer; Standard 0)

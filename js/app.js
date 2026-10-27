@@ -3,9 +3,10 @@ import {
   getProduct, searchProducts, getPrices, aggregatePrices, formatPrice, formatDate, relativeDate,
   mapsLinkForBranch, mapsLinkAllBranches, formatNutrient, mergePrices, formatDistance, onlineSearchLinks, reportPriceLink,
   getDailyPrices, getShoppingPrices, getServerHealth, storeLogoUrl,
+  getShoppingQuota, readQuotaCache, writeQuotaCache, normQuota,
 } from './api.js';
 import { openCamera, startBarcodeLoop, stopBarcodeLoop, stopScanner, hasTorch, setTorch } from './scanner.js';
-import { getAiEndpoint, getServerEndpoint, setAiEndpoint, normalizeEndpoint, isValidEndpoint, getMode, setMode, MODES } from './config.js';
+import { getAiEndpoint, getServerEndpoint, setAiEndpoint, normalizeEndpoint, isValidEndpoint, getMode, setMode, MODES, getSerpKey, setSerpKey, SERP_KEY_RE } from './config.js';
 import { initKi, start as kiStart, stop as kiStop } from './ki.js';
 import { initSheet, openSheet, closeSheet, setContent, isOpen, snapTo, getSnap, getBody } from './sheet.js';
 import { haptic, countUp, liquidSwap, isReduced, sleep } from './motion.js';
@@ -222,14 +223,46 @@ function dailyCard(r, i) {
     : `<div class="dcard surface stagger${extra}" style="--i:${Math.min(i, DP_VISIBLE)}"${extra ? ' hidden' : ''}>${inner}</div>`;
 }
 
-function dailyBody(list, active, title = DP_TITLE) {
+const SERP_PRICING = 'https://serpapi.com/pricing';
+let focusKeyNext = false; // nach Klick auf „eigener Schlüssel“: Einstellungen beim Schlüssel-Bereich öffnen
+
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+function renewText(q) {
+  if (!q || !q.renews) return '';
+  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(q.renews) ? q.renews + 'T12:00:00' : q.renews);
+  return isNaN(d) ? '' : d.toLocaleDateString('de-DE', { day: 'numeric', month: 'long' });
+}
+
+/** Hinweiskarte: Kontingent knapp (warn) bzw. aufgebraucht (exhausted). */
+function quotaCard(kind, q) {
+  const own = !!q && q.source === 'user';
+  const ren = renewText(q);
+  if (kind === 'warn') {
+    return `<div class="qcard warn surface" id="dp-quota" role="status">
+      <div class="q-head">${icon('i-meter', 'q-ico')}<div class="q-t"><strong>Nur noch ${esc(plural(q.left, 'Echtzeit-Suche', 'Echtzeit-Suchen'))} ${own ? 'in deinem SerpApi-Kontingent' : 'diesen Monat'}</strong>
+        <span>Jede neue Suche verbraucht eine davon.</span></div></div>
+      <button class="btn primary q-main" id="dp-load" type="button">${icon('i-search')}Online-Preise laden (1 Suche)</button>
+      <div class="q-links">${own ? '' : `<a class="q-link" data-act="key" href="#/einstellungen">Mehr Suchen mit eigenem SerpApi-Abo</a>`}
+        <a class="q-link sub" href="${SERP_PRICING}" target="_blank" rel="noopener">Tarife ansehen${icon('i-ext')}</a></div></div>`;
+  }
+  return `<div class="qcard out surface" id="dp-quota" role="status">
+    <div class="q-head">${icon('i-alert', 'q-ico')}<div class="q-t"><strong>Kontingent für diesen Monat aufgebraucht</strong>
+      <span>${own ? 'Dein SerpApi-Kontingent ist aufgebraucht.' : 'Mit einem eigenen SerpApi-Abo kannst du sofort weitersuchen.'}${ren ? ` Erneuerung am ${esc(ren)}.` : ''}</span></div></div>
+    <div class="q-btns">
+      <a class="btn primary" data-act="key" href="#/einstellungen">${icon('i-gear')}${own ? 'Schlüssel ändern' : 'Eigenen Schlüssel eintragen'}</a>
+      <a class="btn glass-btn" href="${SERP_PRICING}" target="_blank" rel="noopener">Tarife bei SerpApi${icon('i-ext')}</a></div></div>`;
+}
+
+function dailyBody(list, active, title = DP_TITLE, gate = null, note = '') {
   const names = [active.shopping && 'Google Shopping', active.prices && 'Open Price Engine'].filter(Boolean).join(' und ');
   const hidden = Math.max(0, list.length - DP_VISIBLE);
   return `<h2 class="label">${esc(title)}</h2>
+    ${gate ? quotaCard(gate.kind, gate.quota) : ''}
     ${list.length ? `<div class="dlist">${list.map(dailyCard).join('')}</div>`
       + (hidden ? `<button class="chip dp-all" id="dp-all" type="button" aria-expanded="false">Alle ${list.length} Angebote zeigen${icon('i-chev')}</button>` : '')
-      : '<div class="state surface slim"><p class="state-s">Keine Tagespreise gefunden.</p></div>'}
-    <p class="hint-s">Preise aus ${esc(names)}, Stand heute. Versandkosten können hinzukommen.</p>`;
+      : gate ? '' : '<div class="state surface slim"><p class="state-s">Keine Tagespreise gefunden.</p></div>'}
+    ${note ? `<p class="q-note" role="status">${icon('i-meter')}${esc(note)}</p>` : ''}
+    ${names ? `<p class="hint-s">Preise aus ${esc(names)}, Stand heute. Versandkosten können hinzukommen.</p>` : ''}`;
 }
 
 /** Hero-Zeile: günstigstes Angebot in gleicher Größe, keine Mehrfachpackung. */
@@ -248,13 +281,43 @@ async function loadDaily(b, params, token, st, opts = {}) {
   try {
     const h = await getServerHealth(ep);
     if (!live()) return [];
-    const active = { shopping: !!h.shopping, prices: !!h.prices && !!params.q };
+    const active = { shopping: !!h.shopping || !!getSerpKey(), prices: !!h.prices && !!params.q };
     if (opts.shoppingOnly) active.prices = false;
     if (!active.shopping && !active.prices) return [];
     sec.innerHTML = `<h2 class="label">${esc(title)}</h2><div class="skeleton" role="status" aria-label="Lädt …"><div class="sk sk-row"></div><div class="sk sk-row"></div></div>`;
     sec.hidden = false;
+    let gate = null, note = '';
+    /** Echtzeit-Suche mit Kontingent-Ablauf: Cache zuerst, dann Kontingent prüfen, dann ggf. suchen. */
+    const shoppingFlow = async () => {
+      if (!opts.force) {
+        try {
+          const c = await getShoppingPrices(ep, params, { cachedOnly: true });
+          if (c.quota) writeQuotaCache(ep, c.quota);
+          if (c.cached && c.results) return c.results;
+        } catch { /* kein Cache-Treffer möglich → weiter */ }
+        let q = null;
+        try { q = await getShoppingQuota(ep); } catch { /* Kontingent unbekannt → wie bisher suchen */ }
+        if (q && (q.exhausted || q.warn)) { gate = { kind: q.exhausted ? 'out' : 'warn', quota: q }; return []; }
+      }
+      try {
+        const r = await getShoppingPrices(ep, params);
+        if (r.quota) {
+          writeQuotaCache(ep, r.quota);
+          if (r.quota.warn && !r.quota.exhausted) note = `Noch ${plural(r.quota.left, 'Suche', 'Suchen')} ${r.quota.source === 'user' ? 'in deinem SerpApi-Kontingent' : 'diesen Monat'}`;
+        }
+        return r.results || [];
+      } catch (e) {
+        if (e && (e.code === 'quota_exhausted' || (e.status === 429 && e.quota))) {
+          const q = normQuotaSafe(e.quota) || readQuotaCache(ep) || { source: getSerpKey() ? 'user' : 'server', left: 0, renews: '', warn: false, exhausted: true };
+          writeQuotaCache(ep, { ...q, left: 0, exhausted: true });
+          gate = { kind: 'out', quota: { ...q, left: 0, exhausted: true } };
+          return [];
+        }
+        throw e;
+      }
+    };
     const jobs = [
-      active.shopping ? getShoppingPrices(ep, params) : Promise.reject(new Error('aus')),
+      active.shopping ? shoppingFlow() : Promise.reject(new Error('aus')),
       active.prices ? getDailyPrices(ep, params) : Promise.reject(new Error('aus')),
     ];
     const [g, o] = await Promise.allSettled(jobs);
@@ -262,8 +325,10 @@ async function loadDaily(b, params, token, st, opts = {}) {
     const okG = g.status === 'fulfilled', okO = o.status === 'fulfilled';
     if (!okG && !okO) { sec.hidden = true; sec.innerHTML = ''; return []; }
     const list = [...(okG ? g.value : []), ...(okO ? o.value : [])].sort((a, c) => a.price - c.price);
-    if (opts.hideEmpty && !list.length) { sec.hidden = true; sec.innerHTML = ''; return []; }
-    sec.innerHTML = dailyBody(list, { shopping: okG && active.shopping, prices: okO && active.prices }, title);
+    if (opts.hideEmpty && !list.length && !gate) { sec.hidden = true; sec.innerHTML = ''; return []; }
+    sec.innerHTML = dailyBody(list, { shopping: okG && active.shopping && !gate, prices: okO && active.prices }, title, gate, note);
+    const load = $('#dp-load', sec);
+    if (load) load.onclick = () => { haptic(10); loadDaily(b, params, token, st, { ...opts, force: true }); };
     const all = $('#dp-all', sec);
     if (all) all.onclick = () => {
       const more = [...sec.querySelectorAll('.dp-more')];
@@ -282,6 +347,8 @@ async function loadDaily(b, params, token, st, opts = {}) {
     return [];
   }
 }
+
+const normQuotaSafe = (q) => { try { return q ? normQuota(q) : null; } catch { return null; } };
 
 function heroOnlineHtml(st, best) {
   const d = st && st.daily;
@@ -718,8 +785,30 @@ function settingsView() {
       <button id="set-remove" class="chip" type="button" ${ep ? '' : 'hidden'}>${icon('i-close')}Entfernen</button>
     </form>
     <a class="link" href="${esc(WORKER_DOCS)}" target="_blank" rel="noopener">Anleitung: Server einrichten ${icon('i-ext')}</a>
+    <div id="srv-quota" class="quota-line" hidden></div>
+    <section class="serp surface" id="serp-sec" aria-labelledby="serp-h">
+      <h3 id="serp-h" class="serp-h">Eigener SerpApi-Schlüssel (optional)</h3>
+      <p class="set-p">Mehr Echtzeit-Suchen? Schließe ein eigenes SerpApi-Abo ab und trage deinen Schlüssel hier ein. Die Suchen laufen dann über dein Kontingent. Der Schlüssel bleibt auf diesem Gerät und wird nur an deinen ScanDeals-Server gesendet.</p>
+      <a class="link" href="${SERP_PRICING}" target="_blank" rel="noopener">Tarife bei SerpApi ansehen ${icon('i-ext')}</a>
+      <form id="serp-form" autocomplete="off" novalidate>
+        <label class="field-l" for="serp-key">SerpApi-Schlüssel</label>
+        <input id="serp-key" class="field" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Schlüssel einfügen" value="${esc(getSerpKey())}">
+        <div id="serp-result" class="set-result" role="status" aria-live="polite"></div>
+        <div class="set-actions">
+          <button id="serp-check" class="btn glass-btn" type="button">${icon('i-meter')}Kontingent prüfen</button>
+          <button id="serp-save" class="btn primary" type="submit">${icon('i-check')}Speichern</button>
+        </div>
+        <button id="serp-remove" class="chip" type="button" ${getSerpKey() ? '' : 'hidden'}>${icon('i-close')}Entfernen</button>
+      </form>
+    </section>
   </div>`;
-  showSheet(simpleHead('Einstellungen', 'KI-Erkennung, Echtzeit- und Tagespreise'), bodyHtml, { snap: 'full', onInsert: (h, b) => wireSettings(b) });
+  showSheet(simpleHead('Einstellungen', 'KI-Erkennung, Echtzeit- und Tagespreise'), bodyHtml, { snap: 'full', onInsert: (h, b) => {
+    wireSettings(b);
+    if (focusKeyNext) {
+      focusKeyNext = false;
+      setTimeout(() => { const sec = $('#serp-sec', b); if (sec) sec.scrollIntoView({ block: 'start', behavior: isReduced() ? 'auto' : 'smooth' }); const f = $('#serp-key', b); if (f) f.focus({ preventScroll: true }); }, 380);
+    }
+  } });
 }
 
 function wireSettings(b) {
@@ -744,7 +833,20 @@ function wireSettings(b) {
     if (my !== chipSeq || !b.isConnected) return;
     setChip(chip, 'KI-Erkennung', h && h.ok ? h.ai : 'down');
     setChip(chipP, 'Tagespreise', h && h.ok ? h.prices : 'down');
-    setChip(chipS, 'Echtzeitpreise', h && h.ok ? h.shopping : 'down');
+    setChip(chipS, 'Echtzeitpreise', h && h.ok ? (h.shopping || !!getSerpKey()) : 'down');
+    refreshServerQuota(h);
+  };
+  const srvQ = $('#srv-quota', b);
+  const refreshServerQuota = async (h) => {
+    srvQ.hidden = true;
+    if (!h || !h.ok || !h.shopping) return;
+    try {
+      const q = await getShoppingQuota(getAiEndpoint(), { key: '', cache: false });
+      if (!b.isConnected) return;
+      srvQ.className = 'quota-line' + (q.exhausted ? ' out' : q.warn ? ' warn' : '');
+      srvQ.textContent = Number.isFinite(q.perMonth) ? `Gemeinsames Kontingent: noch ${q.left} von ${q.perMonth} diesen Monat` : `Gemeinsames Kontingent: noch ${q.left} Suchen diesen Monat`;
+      srvQ.hidden = false;
+    } catch { /* Kontingent unbekannt → nichts anzeigen */ }
   };
   refreshChip();
   const read = () => normalizeEndpoint(input.value);
@@ -771,6 +873,35 @@ function wireSettings(b) {
     if (!isValidEndpoint(url)) { show('err', 'Bitte eine gültige https://-Adresse eintragen.'); return; }
     setAiEndpoint(url); input.value = url; haptic([12, 40, 18]);
     show('ok', 'Gespeichert.'); refreshChip(true);
+  };
+  // Eigener SerpApi-Schlüssel
+  const keyIn = $('#serp-key', b), kres = $('#serp-result', b);
+  const kshow = (kind, msg) => { kres.className = 'set-result ' + kind; kres.textContent = msg; };
+  $('#serp-form', b).onsubmit = (e) => {
+    e.preventDefault();
+    const v = keyIn.value.trim();
+    if (!v) { setSerpKey(''); writeQuotaCache('', null); kshow('ok', 'Kein eigener Schlüssel – gemeinsames Kontingent wird genutzt.'); $('#serp-remove', b).hidden = true; refreshChip(); return; }
+    if (!SERP_KEY_RE.test(v)) { kshow('err', 'Der Schlüssel sieht ungültig aus (20–100 Buchstaben/Ziffern).'); return; }
+    setSerpKey(v); writeQuotaCache('', null); haptic([12, 40, 18]);
+    $('#serp-remove', b).hidden = false;
+    kshow('ok', 'Gespeichert – Suchen laufen jetzt über dein Kontingent.'); refreshChip();
+  };
+  $('#serp-remove', b).onclick = () => { setSerpKey(''); writeQuotaCache('', null); keyIn.value = ''; $('#serp-remove', b).hidden = true; kshow('ok', 'Entfernt – gemeinsames Kontingent wird genutzt.'); refreshChip(); haptic(8); };
+  $('#serp-check', b).onclick = async () => {
+    const ep = getAiEndpoint();
+    const v = keyIn.value.trim() || getSerpKey();
+    if (!ep) { kshow('err', 'Trage zuerst oben deinen ScanDeals-Server ein.'); return; }
+    if (v && !SERP_KEY_RE.test(v)) { kshow('err', 'Der Schlüssel sieht ungültig aus (20–100 Buchstaben/Ziffern).'); return; }
+    kshow('busy', 'Kontingent wird geprüft …'); haptic(8);
+    try {
+      const q = await getShoppingQuota(ep, { key: v, cache: false });
+      if (!b.isConnected) return;
+      const of = Number.isFinite(q.perMonth) ? ` von ${q.perMonth}` : '';
+      const ren = renewText(q);
+      kshow(q.exhausted ? 'err' : q.warn ? 'warn' : 'ok', `Noch ${q.left}${of} Suchen${q.plan ? ` (Plan ${q.plan})` : ''}${ren ? ` · Erneuerung am ${ren}` : ''}`);
+    } catch (err) {
+      kshow('err', err && err.serverMessage ? err.serverMessage : err && err.timeout ? 'Keine Antwort (Zeitüberschreitung).' : 'Kontingent konnte nicht geprüft werden.');
+    }
   };
   $('#set-remove', b).onclick = () => { setAiEndpoint(''); input.value = ''; show('ok', 'Entfernt – Gratis-Modus aktiv.'); refreshChip(); haptic(8); };
 }
@@ -827,6 +958,7 @@ initSheet({
 $('#search-form').addEventListener('submit', (e) => { e.preventDefault(); submitQuery($('#q').value); $('#q').blur(); });
 $('#q').addEventListener('input', () => { $('#go').classList.toggle('show', !!$('#q').value.trim()); });
 $('#history-btn').addEventListener('click', () => { location.hash = '#/verlauf'; });
+document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('a[data-act="key"]')) focusKeyNext = true; });
 $('#settings-btn').addEventListener('click', () => { location.hash = '#/einstellungen'; });
 window.addEventListener('hashchange', route);
 

@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { lookupShopping, SerpError, cacheSeconds } from "./shopping.js";
+import { pickKey, computeQuota, fetchAccount, readServerQuota, writeServerQuota, decrement, QuotaError } from "./quota.js";
 import { lookupPrices, fetchStoresList, OpeError, CACHE_TTL_S, CACHE_TTL_PARTIAL_S } from "./prices.js";
 
 const MAX_BODY_BYTES = 1.5 * 1024 * 1024;
@@ -35,7 +36,7 @@ function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, X-SerpApi-Key",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
@@ -190,18 +191,58 @@ export function createHandler(makeClient = defaultMakeClient, opts = {}) {
     return json(payload, 200, origin);
   }
 
-  function serpFailure(err, origin) {
+  const QUOTA_EXHAUSTED = "Monatliches Suchkontingent aufgebraucht";
+
+  function serpFailure(err, origin, quota = null) {
     if (err instanceof SerpError && err.kind === "auth") return json({ error: "SerpApi-Schlüssel ungültig" }, 502, origin);
-    if (err instanceof SerpError && err.kind === "rate") return json({ error: "Suchkontingent aufgebraucht" }, 429, origin);
+    if (err instanceof SerpError && err.kind === "rate") {
+      return json({ error: "Suchkontingent aufgebraucht", code: "quota_exhausted", ...(quota ? { quota } : {}) }, 429, origin);
+    }
     return json({ error: "Preissuche momentan nicht erreichbar" }, 502, origin);
   }
 
-  async function handleShopping(url, env, origin) {
+  function quotaFailure(err, origin) {
+    if (err instanceof QuotaError && err.kind === "auth") return json({ error: "SerpApi-Schlüssel ungültig" }, 502, origin);
+    return json({ error: "Kontingent momentan nicht abrufbar" }, 502, origin);
+  }
+
+  // Rohdaten des Kontingents: Server-Schlüssel 5 min im Cache, eigene Schlüssel nie.
+  // -> { raw, at, cached } ; wirft QuotaError
+  async function loadRaw(sel, cache) {
+    if (sel.source === "server") {
+      const hit = await readServerQuota(cache);
+      if (hit) return { raw: hit.raw, at: hit.at, cached: true };
+    }
+    const raw = await fetchAccount(fetchFn, sel.key);
+    const at = Date.now();
+    if (sel.source === "server") await writeServerQuota(cache, raw, at);
+    return { raw, at, cached: false };
+  }
+
+  function safeCache() {
+    try {
+      return getCache();
+    } catch {
+      return null;
+    }
+  }
+
+  async function handleQuota(env, sel, origin) {
+    try {
+      const { raw } = await loadRaw(sel, safeCache());
+      return json(computeQuota(raw, env, sel.source), 200, origin);
+    } catch (err) {
+      return quotaFailure(err, origin);
+    }
+  }
+
+  async function handleShopping(url, env, sel, origin) {
     const clean = (v) => String(v ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
     const q = clean(url.searchParams.get("q"));
     const brand = clean(url.searchParams.get("brand"));
     const qty = clean(url.searchParams.get("qty"));
     const gtin = clean(url.searchParams.get("gtin")).replace(/\s+/g, "");
+    const cachedOnly = url.searchParams.get("cached_only") === "1";
     if (q ? q.length < 2 || q.length > 120 : !/^\d{8,14}$/.test(gtin)) return json({ error: "Suchbegriff fehlt oder ist ungültig" }, 400, origin);
     if (gtin && !/^\d{8,14}$/.test(gtin)) return json({ error: "Ungültige Anfrage" }, 400, origin);
     if (brand.length > 60 || qty.length > 60) return json({ error: "Ungültige Anfrage" }, 400, origin);
@@ -211,19 +252,31 @@ export function createHandler(makeClient = defaultMakeClient, opts = {}) {
     let cacheKey = null;
     try {
       cache = getCache();
+      // Cache-Schlüssel enthält nie einen API-Schlüssel.
       const norm = [query.q, query.brand, query.qty, query.gtin].map((v) => v.toLowerCase());
       cacheKey = new Request("https://scandeals-cache.invalid/shopping?k=" + encodeURIComponent(norm.join("|")));
       const hit = cache && (await cache.match(cacheKey));
-      if (hit) return json(await hit.json(), 200, origin);
+      if (hit) return json({ ...(await hit.json()), cached: true }, 200, origin);
     } catch {
       /* Cache ist optional */
+    }
+    if (cachedOnly) return json({ cached: false }, 200, origin);
+
+    // Kontingent prüfen (account.json zählt nicht); Fehler blockieren die Suche nicht.
+    let acct = null;
+    try {
+      acct = await loadRaw(sel, cache);
+      const q0 = computeQuota(acct.raw, env, sel.source);
+      if (q0.exhausted) return json({ error: QUOTA_EXHAUSTED, code: "quota_exhausted", quota: q0 }, 429, origin);
+    } catch {
+      acct = null;
     }
 
     let out;
     try {
-      out = await lookupShopping(fetchFn, env, query);
+      out = await lookupShopping(fetchFn, env, query, sel.key);
     } catch (err) {
-      return serpFailure(err, origin);
+      return serpFailure(err, origin, acct ? computeQuota({ ...acct.raw, left: 0 }, env, sel.source) : null);
     }
     const payload = {
       query: { q: query.q, brand: query.brand, qty: query.qty, gtin: query.gtin },
@@ -243,7 +296,13 @@ export function createHandler(makeClient = defaultMakeClient, opts = {}) {
         /* ignorieren */
       }
     }
-    return json(payload, 200, origin);
+    let quota = null;
+    if (acct) {
+      const raw = decrement(acct.raw);
+      quota = computeQuota(raw, env, sel.source);
+      if (sel.source === "server") await writeServerQuota(cache, raw, acct.at);
+    }
+    return json({ ...payload, cached: false, quota }, 200, origin);
   }
 
   return async function handle(request, env) {
@@ -285,13 +344,15 @@ export function createHandler(makeClient = defaultMakeClient, opts = {}) {
       return url.pathname === "/prices/stores" ? handleStores(env, allowed) : handlePrices(url, env, allowed);
     }
 
-    if (url.pathname === "/shopping") {
+    if (url.pathname === "/shopping" || url.pathname === "/shopping/quota") {
       if (request.method !== "GET") return json({ error: "Methode nicht erlaubt" }, 405, allowed);
       if (!allowed && env.OPE_DEBUG !== "true" && env.DEBUG !== "true") return json({ error: "Origin nicht erlaubt" }, 403, null);
       const ip = request.headers.get("CF-Connecting-IP") || "unknown";
       if (rateLimited(ip)) return json({ error: "Zu viele Anfragen, bitte kurz warten" }, 429, allowed);
-      if (!env.SERPAPI_KEY) return json({ error: "Echtzeitpreise sind nicht eingerichtet" }, 503, allowed);
-      return handleShopping(url, env, allowed);
+      const sel = pickKey(request, env);
+      if (sel.invalid) return json({ error: "Ungültiger SerpApi-Schlüssel (Format)" }, 400, allowed);
+      if (!sel.key) return json({ error: "Echtzeitpreise sind nicht eingerichtet" }, 503, allowed);
+      return url.pathname === "/shopping/quota" ? handleQuota(env, sel, allowed) : handleShopping(url, env, sel, allowed);
     }
 
     if (url.pathname === "/identify") {

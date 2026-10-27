@@ -2,6 +2,7 @@
 export const DEFAULT_AI_ENDPOINT = '';
 const EP_KEY = 'scandeals.aiEndpoint';
 const MODE_KEY = 'scandeals.mode';
+const SERP_KEY = 'scandeals.serpKey';
 export const MODES = ['auto', 'barcode', 'objekt'];
 
 export function normalizeEndpoint(v) {
@@ -33,4 +34,16 @@ export function getMode() {
 }
 export function setMode(m) {
   try { localStorage.setItem(MODE_KEY, m); } catch { /* ignorieren */ }
+}
+
+/** Eigener SerpApi-Schlüssel (optional, nur auf diesem Gerät); '' = keiner. */
+export const SERP_KEY_RE = /^[A-Za-z0-9]{20,100}$/;
+export function getSerpKey() {
+  try { const v = (localStorage.getItem(SERP_KEY) || '').trim(); return SERP_KEY_RE.test(v) ? v : ''; } catch { return ''; }
+}
+export function setSerpKey(v) {
+  try {
+    const n = String(v || '').trim();
+    if (n) localStorage.setItem(SERP_KEY, n); else localStorage.removeItem(SERP_KEY);
+  } catch { /* ignorieren */ }
 }

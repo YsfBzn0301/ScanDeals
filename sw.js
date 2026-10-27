@@ -5,9 +5,9 @@
 //   Open Food Facts / Open Prices (*.openfoodfacts.org): network-first, Fallback Cache
 //   Händler-Logos (raw.githubusercontent.com): stale-while-revalidate, nur 200er (404/Opaque nie gecacht)
 //   alles andere (z. B. CDN-Module, TF-Modellgewichte): stale-while-revalidate
-//   *.workers.dev (ScanDeals-Server: /identify, /health, /prices, /shopping) und alle Nicht-GET-Requests: nie gecacht, direkt ans Netz
+//   *.workers.dev (ScanDeals-Server: /identify, /health, /prices, /shopping, /shopping/quota) und alle Nicht-GET-Requests: nie gecacht, direkt ans Netz
 
-const CACHE = 'scandeals-v9';
+const CACHE = 'scandeals-v10';
 
 const SHELL = [
   './',

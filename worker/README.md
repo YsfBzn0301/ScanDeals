@@ -82,6 +82,17 @@ Hinweise:
 - `GET /shopping?q=…&brand=…&qty=…` oder `GET /shopping?gtin=…` (8 bis 14 Ziffern). Pro Händler kommt nur das günstigste passende Angebot (max. 12, günstig zuerst). Nur Preise in EUR, Gebrauchtware wird verworfen. Mehrfachpackungen („24 x 0,5 l“, „6er Pack“) erkennt der Worker und liefert `pack` sowie `same_size: false`.
 - Wie `/prices` antwortet `/shopping` nur der App (erlaubte Origins), außer im Debug-Modus, und teilt sich das Rate-Limit.
 
+## Kontingent & eigene Schlüssel
+
+Der Worker kennt das monatliche SerpApi-Kontingent (Account API `account.json`, zählt selbst nicht als Suche) und lässt die App rechtzeitig warnen.
+
+- `GET /shopping/quota` liefert `{key_source, plan_name, per_month, left, used, hourly_limit, hourly_used, renews, warn, exhausted}`. Für den Server-Schlüssel wird das Ergebnis 5 Minuten im Cache gehalten, für eigene Schlüssel nie. Ungültiger Schlüssel: 502.
+- `left` ist `total_searches_left` (sonst `plan_searches_left`) abzüglich `SERP_RESERVE`, nie unter 0. `warn` gilt bei `left <= max(SERP_WARN_MIN, ceil(per_month * SERP_WARN_PERCENT / 100))` und `left > 0`; `exhausted` bei `left <= 0`.
+- Variablen in `wrangler.toml` (alle optional): `SERP_WARN_PERCENT` (20), `SERP_WARN_MIN` (25), `SERP_RESERVE` (0).
+- `GET /shopping` prüft vor jeder echten Suche das Kontingent. Aufgebraucht: `429 {code: "quota_exhausted", quota}` ohne Suche (ebenso, wenn SerpApi selbst „run out of searches“ meldet). Nach einer Suche enthält die Antwort `cached: false` und `quota` (der gecachte Wert wird um 1 verringert). Schlägt die Kontingentabfrage fehl, wird trotzdem gesucht (`quota: null`).
+- `/shopping?...&cached_only=1` antwortet nur aus dem Cache: Treffer wie gewohnt plus `cached: true`, sonst `200 {cached: false}` ohne SerpApi-Aufruf.
+- **Eigener Schlüssel:** Der Header `X-SerpApi-Key` (20 bis 100 Zeichen, nur `A-Za-z0-9`) hat Vorrang vor `SERPAPI_KEY`; die Antworten tragen dann `key_source: "user"`. Ein falsches Format ergibt 400. Mit eigenem Schlüssel funktioniert `/shopping` auch ohne Server-Secret (`features.shopping` bleibt davon unberührt). Schlüssel werden nie geloggt, nie zurückgegeben und nie in Cache-Schlüssel aufgenommen; Antworten für fremde Schlüssel werden nicht gecacht, nur die gemeinsame Ergebnisliste je Suchbegriff.
+
 ## Erlaubte Webseiten (CORS) ändern
 
 Nur Seiten aus `ALLOWED_ORIGINS` dürfen den Worker nutzen. Standard in `wrangler.toml`:

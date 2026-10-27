@@ -11,6 +11,7 @@ const req = (path, { origin = ORIGIN } = {}) =>
 
 function serp(body, status = 200, calls = []) {
   return async (url, init) => {
+    if (String(url).startsWith("https://serpapi.com/account.json")) return new Response("{}", { status: 500 }); // Kontingent unbekannt: Suche läuft trotzdem
     calls.push({ url: new URL(url), init });
     return new Response(JSON.stringify(body), { status });
   };
@@ -141,7 +142,7 @@ test("Fehler-Mapping ohne Details", async () => {
   r = await run(serp({ error: "x" }, 401));
   assert.equal(r.body.error, "SerpApi-Schlüssel ungültig");
   r = await run(serp({ error: "Your account has run out of searches." }));
-  assert.deepEqual(r, { status: 429, body: { error: "Suchkontingent aufgebraucht" } });
+  assert.deepEqual(r, { status: 429, body: { error: "Suchkontingent aufgebraucht", code: "quota_exhausted" } });
   r = await run(serp({}, 429));
   assert.equal(r.status, 429);
   r = await run(serp({ error: "Google hasn't returned any results for this query." }));
@@ -158,12 +159,13 @@ test("Fehler-Mapping ohne Details", async () => {
 test("Cache: zweiter Aufruf ohne SerpApi, Fehler nicht gecacht, TTL", async () => {
   const cache = memCache();
   let n = 0;
-  const f = async () => { n++; return new Response(JSON.stringify(BODY)); };
+  const f = async (u) => { if (String(u).includes("account.json")) return new Response("{}", { status: 500 }); n++; return new Response(JSON.stringify(BODY)); };
   const h = make(f, { ...ENV, SERP_CACHE_HOURS: "2" }, cache);
   const a = await (await h("/shopping?q=Monster%20Energy%20Ultra")).json();
   const b = await (await h("/shopping?q=monster%20energy%20ultra")).json();
   assert.equal(n, 1);
-  assert.deepEqual(a, b);
+  assert.deepEqual({ ...a, cached: undefined, quota: undefined }, { ...b, cached: undefined, quota: undefined });
+  assert.equal(b.cached, true);
   assert.equal(cache.puts[0], "public, s-maxage=7200");
 
   const c2 = memCache();

@@ -58,7 +58,7 @@ Welche Quellen aktiv sind, zeigt die App unter **Einstellungen** (Chips „Tages
 index.html          Oberfläche (Seite, Sucher, Bottom-Sheet)
 styles.css          Design, Dark Mode
 manifest.webmanifest  PWA-Manifest
-sw.js               Service Worker (Offline-Cache, Cache-Name scandeals-v9)
+sw.js               Service Worker (Offline-Cache, Cache-Name scandeals-v10)
 js/app.js           Routing, Suche, Produktansicht, Einstellungen
 js/api.js           Datenzugriff (Open Food Facts / Open Prices)
 js/scanner.js       Kamera und Barcode-Erkennung
@@ -100,6 +100,12 @@ HTTPS ist nötig, damit sich die App installieren lässt (Service Worker) und di
 - **iPhone (Safari):** Seite öffnen, Teilen-Symbol → *Zum Home-Bildschirm*.
 
 Danach startet ScanDeals wie eine normale App im Vollbild.
+
+## Echtzeit-Kontingent & eigener SerpApi-Schlüssel
+
+Echtzeitpreise (Google Shopping) nutzen das monatliche SerpApi-Kontingent deines ScanDeals-Servers. Bereits geladene Preise kommen zuerst aus dem Server-Cache und kosten nichts. Wird das Kontingent knapp, lädt die App nicht mehr automatisch, sondern zeigt vorher einen Hinweis („Nur noch X Echtzeit-Suchen diesen Monat“) und sucht erst auf Tipp. Ist es aufgebraucht, verweist die App auf [SerpApi-Tarife](https://serpapi.com/pricing).
+
+Unter *Einstellungen → Eigener SerpApi-Schlüssel (optional)* kannst du einen eigenen SerpApi-Schlüssel hinterlegen. Er bleibt auf dem Gerät (localStorage) und wird nur im Header `X-SerpApi-Key` an deinen ScanDeals-Server gesendet; die Suchen laufen dann über dein eigenes Kontingent. Der Server-Teil ist in `worker/README.md` beschrieben.
 
 ## Grenzen
 
