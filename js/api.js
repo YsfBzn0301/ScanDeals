@@ -42,13 +42,33 @@ export async function fetchJson(url, timeout = TIMEOUT_MS, signal) {
   }
 }
 
-/** Frontbild: v3 selected_images.front.best (200/400/100) → image_front_small_url → leer. */
+/** Erste Bild-URL in einem Objekt finden (bevorzugt Größe 200, dann 400, 100, sonst irgendeine). */
+function firstImageUrl(obj, depth = 0) {
+  if (!obj || typeof obj !== 'object' || depth > 3) return '';
+  for (const size of ['200', '400', '100', 'url']) {
+    const v = obj[size];
+    if (typeof v === 'string' && /^https:\/\//.test(v)) return v;
+  }
+  for (const v of Object.values(obj)) {
+    if (typeof v === 'string' && /^https:\/\/.+\.(jpe?g|png|webp)(\?|$)/i.test(v)) return v;
+  }
+  for (const v of Object.values(obj)) {
+    const u = firstImageUrl(v, depth + 1);
+    if (u) return u;
+  }
+  return '';
+}
+
+/** Frontbild: v3 selected_images.front (best → de → en → beliebige Sprache) → image_front_small_url → leer. */
 function frontImage(p) {
-  const best = p && p.selected_images && p.selected_images.front && p.selected_images.front.best;
-  if (best && typeof best === 'object') {
-    for (const size of ['200', '400', '100']) {
-      if (typeof best[size] === 'string' && best[size]) return best[size];
+  const front = p && p.selected_images && p.selected_images.front;
+  if (front && typeof front === 'object') {
+    for (const lang of ['best', 'de', 'en']) {
+      const u = firstImageUrl(front[lang]);
+      if (u) return u;
     }
+    const u = firstImageUrl(front);
+    if (u) return u;
   }
   return typeof p.image_front_small_url === 'string' ? p.image_front_small_url : '';
 }
@@ -206,7 +226,8 @@ function fmtQty(q) { return String(Math.round(q * 100) / 100).replace('.', ',');
 
 function extractNutritionV3(p) {
   const nu = p.nutrition;
-  const isMl = /(^|[\d\s.,])\s*(ml|cl|l)\s*\.?$/i.test(String(p.quantity || '').trim());
+  const isMl = /(^|[\d\s.,])\s*(ml|cl|l)\s*\.?$/i.test(String(p.quantity || '').trim())
+    || String(p.serving_quantity_unit || '').toLowerCase() === 'ml';
   let per = isMl ? '100ml' : '100g';
   // pro 100 g/ml
   let base = null;
@@ -215,13 +236,14 @@ function extractNutritionV3(p) {
     const m = v3ReadSet(agg, true, 100);
     if (m.size) {
       base = m;
-      if (agg.per === '100g' || agg.per === '100ml') per = agg.per;
+      // Getränke werden oft als "100g" gespeichert, sind aber pro 100 ml gemeint
+      if (agg.per === '100ml' || (agg.per === '100g' && !isMl)) per = agg.per;
     }
   }
   if (!base) {
     for (const s of usableSets(p, (x) => x.per === '100g' || x.per === '100ml')) {
       const m = v3ReadSet(s, false, 100);
-      if (m.size) { base = m; per = s.per; break; }
+      if (m.size) { base = m; per = (s.per === '100g' && isMl) ? '100ml' : s.per; break; }
     }
   }
   // pro Portion
@@ -296,7 +318,21 @@ export async function getProductV3(code) {
   if (!data || typeof data !== 'object' || typeof data.status !== 'string') throw new Error('Unerwartetes Antwortformat (v3.6)');
   if (data.status === 'failure') return null;
   if (!ok.includes(data.status) || !data.product || typeof data.product !== 'object') throw new Error('Unerwartetes Antwortformat (v3.6)');
-  return normalizeProduct({ ...data.product, code: data.product.code || code });
+  const product = normalizeProduct({ ...data.product, code: data.product.code || code });
+  if (product && !product.image) product.image = await getImageV2(code);
+  return product;
+}
+
+/** Notlösung fürs Produktbild über API v2 (kleiner Abruf, Fehler werden ignoriert). */
+async function getImageV2(code) {
+  try {
+    const d = await fetchJson(`${PRODUCT_HOSTS[0]}/api/v2/product/${encodeURIComponent(code)}.json?fields=image_front_small_url,image_front_url,image_small_url`, 6000);
+    const p = (d && d.product) || {};
+    for (const k of ['image_front_small_url', 'image_small_url', 'image_front_url']) {
+      if (typeof p[k] === 'string' && /^https:\/\//.test(p[k])) return p[k];
+    }
+  } catch { /* ohne Bild weiter */ }
+  return '';
 }
 
 /** Produkt per Barcode; null wenn in keiner Datenbank gefunden. v3.6, bei technischen Fehlern Fallback auf v2. */
