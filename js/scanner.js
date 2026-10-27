@@ -1,45 +1,78 @@
-// PreisFuchs – Barcode-Scanner (nativer BarcodeDetector, Fallback ZXing)
+// ScanDeals – Barcode-Scanner (nativer BarcodeDetector, Fallback ZXing)
 const ZXING_URL = 'https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm';
 const FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e'];
 
 let stream = null;
+let video = null;
 let rafId = 0;
 let zxingControls = null;
 let active = false;
 let rejectActive = null;
 
+function track() {
+  const s = stream || (video && video.srcObject);
+  return s && s.getVideoTracks ? s.getVideoTracks()[0] || null : null;
+}
+
+/** Unterstützt die aktive Kamera eine Taschenlampe? */
+export function hasTorch() {
+  try {
+    const t = track();
+    const caps = t && t.getCapabilities ? t.getCapabilities() : null;
+    return !!(caps && caps.torch);
+  } catch { return false; }
+}
+
+/** Schaltet die Taschenlampe; liefert true bei Erfolg. */
+export async function setTorch(on) {
+  const t = track();
+  if (!t) return false;
+  try {
+    await t.applyConstraints({ advanced: [{ torch: !!on }] });
+    return true;
+  } catch { return false; }
+}
+
+/** Gibt Kamera und Erkennung frei. */
 export function stopScanner() {
   active = false;
   if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
   if (zxingControls) { try { zxingControls.stop(); } catch {} zxingControls = null; }
-  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  const s = stream || (video && video.srcObject);
+  if (s && s.getTracks) s.getTracks().forEach((t) => t.stop());
+  stream = null;
   const rej = rejectActive;
   rejectActive = null;
   if (rej) rej(Object.assign(new Error('Scan abgebrochen'), { name: 'AbortError' }));
 }
 
 function friendlyError(e) {
-  if (e && e.name === 'AbortError') return e;
+  if (e && (e.name === 'AbortError' || e.name === 'ScanError')) return e;
   let msg = 'Kamera konnte nicht gestartet werden.';
-  if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) msg = 'Kamerazugriff verweigert. Bitte erlaube die Kamera in den Browser-Einstellungen oder gib den Barcode manuell ein.';
-  else if (e && e.name === 'NotFoundError') msg = 'Keine Kamera gefunden.';
-  else if (e && e.code === 'ZXING') msg = 'Scanner-Bibliothek konnte nicht geladen werden (offline?). Bitte Barcode manuell eingeben.';
+  if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) msg = 'Kamerazugriff verweigert. Erlaube die Kamera in den Browser-Einstellungen oder gib den Barcode in die Suche ein.';
+  else if (e && e.name === 'NotFoundError') msg = 'Keine Kamera gefunden. Gib den Barcode in die Suche ein.';
+  else if (e && e.code === 'ZXING') msg = 'Scanner-Bibliothek konnte nicht geladen werden (offline?). Gib den Barcode in die Suche ein.';
   const err = new Error(msg);
   err.name = 'ScanError';
   return err;
 }
 
-/** Startet die Kamera und liefert den erkannten Code. Lehnt bei Abbruch/Fehler ab. */
-export async function startScanner(videoEl) {
+/**
+ * Startet die Kamera im übergebenen <video> und liefert den erkannten Code.
+ * Der Stream bleibt nach dem Treffer offen (Standbild); der Aufrufer ruft stopScanner().
+ * options.onReady wird aufgerufen, sobald das Bild läuft.
+ */
+export async function startScanner(videoEl, { onReady } = {}) {
   stopScanner();
+  video = videoEl;
   active = true;
   return new Promise(async (resolve, reject) => {
     rejectActive = reject;
     const done = (code) => {
       if (!active) return;
-      try { navigator.vibrate && navigator.vibrate(100); } catch {}
+      active = false;
+      if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
       rejectActive = null;
-      stopScanner();
       resolve(String(code));
     };
     const fail = (e) => {
@@ -63,6 +96,7 @@ export async function startScanner(videoEl) {
           videoEl.srcObject = stream;
           videoEl.setAttribute('playsinline', '');
           await videoEl.play();
+          if (onReady) onReady();
           let busy = false;
           const tick = async () => {
             if (!active) return;
@@ -90,7 +124,8 @@ export async function startScanner(videoEl) {
       zxingControls = await reader.decodeFromConstraints(constraints, videoEl, (result) => {
         if (result) done(result.getText());
       });
-      if (!active && zxingControls) { try { zxingControls.stop(); } catch {} }
+      if (!active) { try { zxingControls.stop(); } catch {} return; }
+      if (onReady) onReady();
     } catch (e) {
       fail(e);
     }

@@ -1,50 +1,151 @@
 <!doctype html>
-<html lang="de">
+<html lang="de" class="splashing">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>PreisFuchs – Preisvergleich per Suche &amp; Scan</title>
-  <meta name="description" content="PreisFuchs: Preise per Produktsuche oder Barcode-Scan vergleichen.">
-  <meta name="theme-color" content="#ff6a00">
-  <meta name="color-scheme" content="light dark">
+  <title>ScanDeals – Preisvergleich per Barcode-Scan</title>
+  <meta name="description" content="ScanDeals: Preise per Barcode-Scan oder Produktsuche vergleichen.">
+  <meta name="theme-color" content="#0D0F12">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ScanDeals">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icons/icon.svg">
   <link rel="apple-touch-icon" href="./icons/icon-192.png">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-  <header class="app-header">
-    <div class="wrap header-row">
-      <button id="back" class="icon-btn" type="button" aria-label="Zurück" hidden>
-        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
-      <a class="brand" href="#/"><span class="logo" aria-hidden="true">🦊</span> PreisFuchs</a>
-    </div>
-    <div class="wrap">
-      <form id="search-form" class="search" role="search" autocomplete="off">
-        <input id="q" type="search" inputmode="search" enterkeyhint="search" placeholder="Produkt oder Barcode eingeben" aria-label="Produktname oder Barcode" autocapitalize="off">
-        <button class="btn primary" type="submit">Suchen</button>
+  <!-- SVG-Sprite: Verläufe, Logo, Icons -->
+  <svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
+    <defs>
+      <linearGradient id="sdg" gradientUnits="userSpaceOnUse" x1="70" y1="60" x2="450" y2="460">
+        <stop offset="0" stop-color="#00E5FF"/><stop offset="1" stop-color="#A855F7"/>
+      </linearGradient>
+      <linearGradient id="sdg-bb" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#00E5FF"/><stop offset="1" stop-color="#A855F7"/>
+      </linearGradient>
+      <linearGradient id="sdglass" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#fff" stop-opacity=".24"/><stop offset="1" stop-color="#fff" stop-opacity=".04"/>
+      </linearGradient>
+    </defs>
+    <symbol id="logo" viewBox="0 0 512 512">
+      <path d="M322 344 438 460" stroke="url(#sdg)" stroke-width="46" stroke-linecap="round" fill="none"/>
+      <circle cx="214" cy="236" r="148" fill="url(#sdglass)" stroke="url(#sdg)" stroke-width="22"/>
+      <path d="M112 196a110 110 0 0 1 78-72" stroke="#fff" stroke-opacity=".6" stroke-width="10" stroke-linecap="round" fill="none"/>
+      <g fill="url(#sdg)">
+        <rect x="148" y="176" width="10" height="120" rx="3"/><rect x="168" y="176" width="20" height="120" rx="3"/>
+        <rect x="198" y="176" width="8" height="120" rx="3"/><rect x="216" y="176" width="16" height="120" rx="3"/>
+        <rect x="242" y="176" width="8" height="120" rx="3"/><rect x="260" y="176" width="22" height="120" rx="3"/>
+      </g>
+      <path d="M396 44Q403 97 456 104Q403 111 396 164Q389 111 336 104Q389 97 396 44Z" fill="url(#sdg)"/>
+    </symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></g></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/></g></symbol>
+    <symbol id="i-torch" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 5 13.5h6L10 22l9-12h-6.2z"/></g></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="currentColor"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-next" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-6.2 7-11.5A7 7 0 0 0 5 9.5C5 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></g></symbol>
+    <symbol id="i-map" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 4-6 2v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/></g></symbol>
+    <symbol id="i-ext" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4 10 14"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></g></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8a2 2 0 0 1 2-2h1.6l1.2-1.8h6.4L16.4 6H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="12.5" r="3.6"/></g></symbol>
+    <symbol id="i-bag" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h14l-1 12H6z"/><path d="M9 8V6.5a3 3 0 0 1 6 0V8"/></g></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></g></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2.5 20h19z"/><path d="M12 10v4.5M12 17.4v.1"/></g></symbol>
+  </svg>
+
+  <div class="bg" aria-hidden="true"><i class="blob b1"></i><i class="blob b2"></i></div>
+
+  <div id="app" class="app">
+    <header class="app-header glass">
+      <a class="brand" href="#/" aria-label="ScanDeals – Startseite">
+        <span id="hdr-tile" class="logo-tile" aria-hidden="true"><svg><use href="#logo"/></svg></span>
+        <span class="brand-name">ScanDeals</span>
+      </a>
+      <button id="history-btn" class="icon-btn" type="button" aria-label="Verlauf anzeigen"><svg aria-hidden="true"><use href="#i-clock"/></svg></button>
+    </header>
+
+    <div id="offline" class="offline" role="status" hidden>Du bist offline – evtl. werden nur gespeicherte Daten angezeigt.</div>
+
+    <main class="main">
+      <form id="search-form" class="search glass" role="search" autocomplete="off">
+        <svg class="s-ico" aria-hidden="true"><use href="#i-search"/></svg>
+        <input id="q" type="search" inputmode="search" enterkeyhint="search" placeholder="Produkt oder Barcode suchen" aria-label="Produktname oder Barcode" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <button id="go" class="go" type="submit" aria-label="Suchen"><svg aria-hidden="true"><use href="#i-arrow"/></svg></button>
       </form>
-      <button id="scan-btn" class="btn scan" type="button">
-        <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="currentColor" d="M9 3 7.2 5H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.2L15 3H9zm3 4.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9zm0 2a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/></svg>
-        Barcode scannen
-      </button>
+
+      <section id="vf" class="viewfinder" data-state="idle" aria-label="Barcode-Scanner">
+        <video id="video" muted playsinline autoplay></video>
+        <div class="vf-shade" aria-hidden="true"></div>
+        <div class="vf-ring" aria-hidden="true"></div>
+
+        <div class="vf-idle">
+          <div class="idle-logo logo-tile big" aria-hidden="true"><svg><use href="#logo"/></svg></div>
+          <h2 id="idle-title">Barcode scannen</h2>
+          <p id="idle-text">Halte die Kamera auf einen Strichcode und vergleiche sofort die Preise.</p>
+          <button id="start-btn" class="btn primary" type="button"><svg aria-hidden="true"><use href="#i-camera"/></svg><span id="start-label">Scannen starten</span></button>
+        </div>
+
+        <div class="vf-live" aria-hidden="true">
+          <svg class="corners" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <path d="M3 20V9a6 6 0 0 1 6-6h11M80 3h11a6 6 0 0 1 6 6v11M97 80v11a6 6 0 0 1-6 6H80M20 97H9a6 6 0 0 1-6-6V80" fill="none" stroke="url(#sdg-bb)" stroke-width="1.1" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+          </svg>
+          <div class="scan-track"><div class="scanline"></div></div>
+          <div class="flash"></div>
+        </div>
+
+        <p id="vf-hint" class="vf-hint">Barcode in den Rahmen halten</p>
+        <div id="vf-chip" class="code-chip" role="status"></div>
+
+        <div class="vf-error" role="alert">
+          <svg aria-hidden="true"><use href="#i-alert"/></svg>
+          <p id="vf-error-text"></p>
+          <button id="retry-scan" class="btn glass-btn" type="button"><svg aria-hidden="true"><use href="#i-refresh"/></svg>Erneut versuchen</button>
+        </div>
+
+        <div class="vf-controls">
+          <button id="torch-btn" class="round-btn glass" type="button" aria-label="Taschenlampe" aria-pressed="false" hidden><svg aria-hidden="true"><use href="#i-torch"/></svg></button>
+          <button id="stop-btn" class="round-btn glass" type="button" aria-label="Scanner stoppen"><svg aria-hidden="true"><use href="#i-stop"/></svg></button>
+        </div>
+      </section>
+
+      <section id="recent-wrap" class="recent" hidden>
+        <h2 class="label">Zuletzt gescannt</h2>
+        <div id="recent" class="chips-row"></div>
+      </section>
+
+      <p class="legal">Preisdaten: Open Prices / Open Food Facts (Community, ODbL). Preise können abweichen.</p>
+    </main>
+  </div>
+
+  <div id="scrim" class="scrim" hidden></div>
+  <section id="sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabindex="-1" hidden>
+    <div class="sheet-bar">
+      <button id="sheet-back" class="icon-btn small" type="button" aria-label="Zurück" hidden><svg aria-hidden="true"><use href="#i-back"/></svg></button>
+      <span class="grabber" aria-hidden="true"></span>
+      <button id="sheet-close" class="icon-btn small" type="button" aria-label="Schließen"><svg aria-hidden="true"><use href="#i-close"/></svg></button>
     </div>
-  </header>
+    <div id="sheet-content" class="sheet-content">
+      <div id="sheet-head" class="sheet-head"></div>
+      <div id="sheet-body" class="sheet-body" aria-live="polite"></div>
+    </div>
+  </section>
 
-  <div id="offline" class="offline" role="status" hidden>Du bist offline – es werden evtl. nur gespeicherte Daten angezeigt.</div>
-
-  <main id="view" class="wrap" aria-live="polite"></main>
-
-  <footer class="wrap footer">
-    Preisdaten: Open Prices / Open Food Facts (Community, ODbL). Preise können abweichen.
-  </footer>
-
-  <div id="scanner" class="scanner" role="dialog" aria-modal="true" aria-label="Barcode scannen" hidden>
-    <video id="video" muted playsinline></video>
-    <div class="frame" aria-hidden="true"><i></i></div>
-    <p id="scan-msg" class="scan-msg">Halte den Barcode in den Rahmen</p>
-    <button id="scan-cancel" class="btn" type="button">Abbrechen</button>
+  <div id="splash" class="splash" aria-hidden="true">
+    <div class="splash-bg"></div>
+    <div class="splash-stage">
+      <div id="splash-fly" class="splash-fly">
+        <div class="logo-tile splash-tile"><svg><use href="#logo"/></svg>
+          <svg class="twinkle" viewBox="0 0 24 24"><path d="M12 0Q12.8 11.2 24 12Q12.8 12.8 12 24Q11.2 12.8 0 12Q11.2 11.2 12 0Z" fill="#fff"/></svg>
+        </div>
+      </div>
+      <div class="splash-word">ScanDeals</div>
+    </div>
   </div>
 
   <script type="module" src="./js/app.js"></script>

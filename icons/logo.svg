@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="ScanDeals">
+  <defs>
+    <linearGradient id="sdg" gradientUnits="userSpaceOnUse" x1="70" y1="60" x2="450" y2="460">
+      <stop offset="0" stop-color="#00E5FF"/>
+      <stop offset="1" stop-color="#A855F7"/>
+    </linearGradient>
+    <linearGradient id="sdglass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".24"/>
+      <stop offset="1" stop-color="#fff" stop-opacity=".04"/>
+    </linearGradient>
+  </defs>
+  <path d="M322 344 438 460" stroke="url(#sdg)" stroke-width="46" stroke-linecap="round" fill="none"/>
+  <circle cx="214" cy="236" r="148" fill="url(#sdglass)" stroke="url(#sdg)" stroke-width="22"/>
+  <path d="M112 196a110 110 0 0 1 78-72" stroke="#fff" stroke-opacity=".6" stroke-width="10" stroke-linecap="round" fill="none"/>
+  <g fill="url(#sdg)">
+    <rect x="148" y="176" width="10" height="120" rx="3"/>
+    <rect x="168" y="176" width="20" height="120" rx="3"/>
+    <rect x="198" y="176" width="8" height="120" rx="3"/>
+    <rect x="216" y="176" width="16" height="120" rx="3"/>
+    <rect x="242" y="176" width="8" height="120" rx="3"/>
+    <rect x="260" y="176" width="22" height="120" rx="3"/>
+  </g>
+  <path d="M396 44Q403 97 456 104Q403 111 396 164Q389 111 336 104Q389 97 396 44Z" fill="url(#sdg)"/>
+</svg>
