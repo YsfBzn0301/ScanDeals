@@ -1,0 +1,9 @@
+name = "scandeals-ai"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# Komma-getrennte Liste erlaubter Origins (exakter Vergleich, ohne Slash am Ende)
+ALLOWED_ORIGINS = "https://ysfbzn0301.github.io,http://localhost:8080"
+MODEL = "claude-opus-5-5"
