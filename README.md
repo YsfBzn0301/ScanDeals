@@ -112,3 +112,7 @@ Unter *Einstellungen → Eigener SerpApi-Schlüssel (optional)* kannst du einen 
 - **Preise sind Community-Meldungen.** Sie können veraltet sein oder vom aktuellen Preis abweichen. Der Stand (Datum) wird jeweils angezeigt.
 - **Nicht jedes Produkt hat Preise.** Wenn keine Meldungen vorliegen, zeigt die App Such-Links zu idealo, Google Shopping, Amazon und Geizhals und einen Link, um selbst einen Preis zu melden.
 - **Barcode nicht gefunden?** Dann hilft oft die Suche nach dem Produktnamen.
+
+### Limit pro Gerät
+
+Mit dem gemeinsamen Server-Schlüssel ist die Zahl echter Echtzeit-Suchen pro Gerät und Kalendermonat begrenzt (Standard 10, einstellbar am Server). Die App erzeugt dafür einmalig eine anonyme Geräte-ID (`localStorage`, `scandeals.deviceId`) und sendet sie als Header `X-Device-Id`. Gecachte Treffer und Suchen mit eigenem SerpApi-Schlüssel zählen nicht. Vor dem Limit warnt die App („Noch X von Y Echtzeit-Suchen auf diesem Gerät diesen Monat“), danach zeigt sie das Datum, ab dem wieder gesucht werden kann, und verweist auf einen eigenen Schlüssel. Wer den Browser-Speicher löscht, bekommt eine neue ID – deshalb gibt es am Server zusätzlich ein großzügigeres Limit pro IP-Adresse (siehe `worker/README.md`).

@@ -3,7 +3,7 @@ import {
   getProduct, searchProducts, getPrices, aggregatePrices, formatPrice, formatDate, relativeDate,
   mapsLinkForBranch, mapsLinkAllBranches, formatNutrient, mergePrices, formatDistance, onlineSearchLinks, reportPriceLink,
   getDailyPrices, getShoppingPrices, getServerHealth, storeLogoUrl,
-  getShoppingQuota, readQuotaCache, writeQuotaCache, normQuota,
+  getShoppingQuota, readQuotaCache, writeQuotaCache, normQuota, mergeQuota,
 } from './api.js';
 import { openCamera, startBarcodeLoop, stopBarcodeLoop, stopScanner, hasTorch, setTorch } from './scanner.js';
 import { getAiEndpoint, getServerEndpoint, setAiEndpoint, normalizeEndpoint, isValidEndpoint, getMode, setMode, MODES, getSerpKey, setSerpKey, SERP_KEY_RE } from './config.js';
@@ -233,31 +233,69 @@ function renewText(q) {
   return isNaN(d) ? '' : d.toLocaleDateString('de-DE', { day: 'numeric', month: 'long' });
 }
 
-/** Hinweiskarte: Kontingent knapp (warn) bzw. aufgebraucht (exhausted). */
-function quotaCard(kind, q) {
+const nextMonthDate = () => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth() + 1, 1, 12); };
+function resetsText(d) {
+  const x = d && d.resets ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(d.resets) ? d.resets + 'T12:00:00' : d.resets) : null;
+  return (x && !isNaN(x) ? x : nextMonthDate()).toLocaleDateString('de-DE', { day: 'numeric', month: 'long' });
+}
+
+/** Welche Hinweiskarte (falls) gilt für dieses Kontingent? Gerätelimit zählt nur beim gemeinsamen Server-Schlüssel. */
+function gateOf(q) {
+  if (!q) return null;
+  const own = q.source === 'user';
+  const d = own ? null : q.device;
+  if (q.exhausted) return { kind: 'out', quota: q };
+  if (d && d.exhausted) return { kind: 'dev-out', quota: q };
+  const c = [];
+  if (q.warn) c.push({ scope: own ? 'own' : 'shared', rest: q.left });
+  if (d && d.warn) c.push({ scope: 'device', rest: d.left });
+  if (!c.length) return null;
+  c.sort((x, y) => x.rest - y.rest);
+  return { kind: 'warn', quota: q, ...c[0] };
+}
+/** „Noch X …“-Text für warn (Karte und Notiz). */
+function warnTitle(scope, rest, q) {
+  if (scope === 'device') return `Noch ${rest} von ${q.device.limit} ${rest === 1 ? 'Echtzeit-Suche' : 'Echtzeit-Suchen'} auf diesem Gerät diesen Monat`;
+  return `Nur noch ${plural(rest, 'Echtzeit-Suche', 'Echtzeit-Suchen')} ${scope === 'own' ? 'in deinem SerpApi-Kontingent' : 'diesen Monat'}`;
+}
+
+/** Hinweiskarte: Kontingent knapp (warn), aufgebraucht (out) bzw. Gerätelimit erreicht (dev-out). */
+function quotaCard(g) {
+  const q = g.quota;
   const own = !!q && q.source === 'user';
-  const ren = renewText(q);
-  if (kind === 'warn') {
+  if (g.kind === 'warn') {
     return `<div class="qcard warn surface" id="dp-quota" role="status">
-      <div class="q-head">${icon('i-meter', 'q-ico')}<div class="q-t"><strong>Nur noch ${esc(plural(q.left, 'Echtzeit-Suche', 'Echtzeit-Suchen'))} ${own ? 'in deinem SerpApi-Kontingent' : 'diesen Monat'}</strong>
+      <div class="q-head">${icon('i-meter', 'q-ico')}<div class="q-t"><strong>${esc(warnTitle(g.scope, g.rest, q))}</strong>
         <span>Jede neue Suche verbraucht eine davon.</span></div></div>
       <button class="btn primary q-main" id="dp-load" type="button">${icon('i-search')}Online-Preise laden (1 Suche)</button>
       <div class="q-links">${own ? '' : `<a class="q-link" data-act="key" href="#/einstellungen">Mehr Suchen mit eigenem SerpApi-Abo</a>`}
         <a class="q-link sub" href="${SERP_PRICING}" target="_blank" rel="noopener">Tarife ansehen${icon('i-ext')}</a></div></div>`;
   }
+  const btns = `<div class="q-btns">
+      <a class="btn primary" data-act="key" href="#/einstellungen">${icon('i-gear')}${own ? 'Schlüssel ändern' : 'Eigenen Schlüssel eintragen'}</a>
+      <a class="btn glass-btn" href="${SERP_PRICING}" target="_blank" rel="noopener">Tarife bei SerpApi${icon('i-ext')}</a></div></div>`;
+  if (g.kind === 'dev-out') {
+    const d = q && q.device;
+    const net = !d || !d.exhausted ? !!g.net : false;
+    const title = net ? 'Limit für dieses Netzwerk erreicht'
+      : d ? `Dein Limit von ${d.limit} Echtzeit-Suchen für diesen Monat ist erreicht` : 'Dein Limit für Echtzeit-Suchen in diesem Monat ist erreicht';
+    return `<div class="qcard out surface" id="dp-quota" role="status">
+    <div class="q-head">${icon('i-alert', 'q-ico')}<div class="q-t"><strong>${esc(title)}</strong>
+      <span>Wieder verfügbar ab ${esc(resetsText(d))}. Mit einem eigenen SerpApi-Abo kannst du sofort weitersuchen.</span></div></div>
+    ${btns}`;
+  }
+  const ren = renewText(q);
   return `<div class="qcard out surface" id="dp-quota" role="status">
     <div class="q-head">${icon('i-alert', 'q-ico')}<div class="q-t"><strong>Kontingent für diesen Monat aufgebraucht</strong>
       <span>${own ? 'Dein SerpApi-Kontingent ist aufgebraucht.' : 'Mit einem eigenen SerpApi-Abo kannst du sofort weitersuchen.'}${ren ? ` Erneuerung am ${esc(ren)}.` : ''}</span></div></div>
-    <div class="q-btns">
-      <a class="btn primary" data-act="key" href="#/einstellungen">${icon('i-gear')}${own ? 'Schlüssel ändern' : 'Eigenen Schlüssel eintragen'}</a>
-      <a class="btn glass-btn" href="${SERP_PRICING}" target="_blank" rel="noopener">Tarife bei SerpApi${icon('i-ext')}</a></div></div>`;
+    ${btns}`;
 }
 
 function dailyBody(list, active, title = DP_TITLE, gate = null, note = '') {
   const names = [active.shopping && 'Google Shopping', active.prices && 'Open Price Engine'].filter(Boolean).join(' und ');
   const hidden = Math.max(0, list.length - DP_VISIBLE);
   return `<h2 class="label">${esc(title)}</h2>
-    ${gate ? quotaCard(gate.kind, gate.quota) : ''}
+    ${gate ? quotaCard(gate) : ''}
     ${list.length ? `<div class="dlist">${list.map(dailyCard).join('')}</div>`
       + (hidden ? `<button class="chip dp-all" id="dp-all" type="button" aria-expanded="false">Alle ${list.length} Angebote zeigen${icon('i-chev')}</button>` : '')
       : gate ? '' : '<div class="state surface slim"><p class="state-s">Keine Tagespreise gefunden.</p></div>'}
@@ -292,21 +330,31 @@ async function loadDaily(b, params, token, st, opts = {}) {
       if (!opts.force) {
         try {
           const c = await getShoppingPrices(ep, params, { cachedOnly: true });
-          if (c.quota) writeQuotaCache(ep, c.quota);
+          if (c.quota) storeQuota(ep, c.quota);
           if (c.cached && c.results) return c.results;
         } catch { /* kein Cache-Treffer möglich → weiter */ }
         let q = null;
         try { q = await getShoppingQuota(ep); } catch { /* Kontingent unbekannt → wie bisher suchen */ }
-        if (q && (q.exhausted || q.warn)) { gate = { kind: q.exhausted ? 'out' : 'warn', quota: q }; return []; }
+        const g0 = gateOf(q);
+        if (g0) { gate = g0; return []; }
       }
       try {
         const r = await getShoppingPrices(ep, params);
         if (r.quota) {
-          writeQuotaCache(ep, r.quota);
-          if (r.quota.warn && !r.quota.exhausted) note = `Noch ${plural(r.quota.left, 'Suche', 'Suchen')} ${r.quota.source === 'user' ? 'in deinem SerpApi-Kontingent' : 'diesen Monat'}`;
+          const mq = storeQuota(ep, r.quota);
+          const gw = gateOf(mq);
+          if (gw && gw.kind === 'warn') note = gw.scope === 'device' ? warnTitle('device', gw.rest, mq) : `Noch ${plural(gw.rest, 'Suche', 'Suchen')} ${gw.scope === 'own' ? 'in deinem SerpApi-Kontingent' : 'diesen Monat'}`;
+          else if (gw && gw.kind === 'dev-out') note = `Das war deine letzte Echtzeit-Suche diesen Monat – wieder ab ${resetsText(mq.device)}`;
         }
         return r.results || [];
       } catch (e) {
+        if (e && e.code === 'device_limit') {
+          const q = normQuotaSafe(e.quota) || { source: 'server', left: NaN, renews: '', warn: false, exhausted: false, device: null };
+          const net = !(q.device && q.device.exhausted);
+          if (!net) storeQuota(ep, q);
+          gate = { kind: 'dev-out', quota: q, net };
+          return [];
+        }
         if (e && (e.code === 'quota_exhausted' || (e.status === 429 && e.quota))) {
           const q = normQuotaSafe(e.quota) || readQuotaCache(ep) || { source: getSerpKey() ? 'user' : 'server', left: 0, renews: '', warn: false, exhausted: true };
           writeQuotaCache(ep, { ...q, left: 0, exhausted: true });
@@ -348,6 +396,12 @@ async function loadDaily(b, params, token, st, opts = {}) {
   }
 }
 
+/** Kontingent in den Sitzungs-Cache übernehmen (fehlende Plan-Felder aus dem alten Stand ergänzen); liefert den zusammengeführten Stand. */
+function storeQuota(ep, nu) {
+  const m = mergeQuota(readQuotaCache(ep), nu);
+  if (m && Number.isFinite(m.left)) writeQuotaCache(ep, m);
+  return m;
+}
 const normQuotaSafe = (q) => { try { return q ? normQuota(q) : null; } catch { return null; } };
 
 function heroOnlineHtml(st, best) {
@@ -786,6 +840,7 @@ function settingsView() {
     </form>
     <a class="link" href="${esc(WORKER_DOCS)}" target="_blank" rel="noopener">Anleitung: Server einrichten ${icon('i-ext')}</a>
     <div id="srv-quota" class="quota-line" hidden></div>
+    <div id="dev-quota" class="quota-line" hidden></div>
     <section class="serp surface" id="serp-sec" aria-labelledby="serp-h">
       <h3 id="serp-h" class="serp-h">Eigener SerpApi-Schlüssel (optional)</h3>
       <p class="set-p">Mehr Echtzeit-Suchen? Schließe ein eigenes SerpApi-Abo ab und trage deinen Schlüssel hier ein. Die Suchen laufen dann über dein Kontingent. Der Schlüssel bleibt auf diesem Gerät und wird nur an deinen ScanDeals-Server gesendet.</p>
@@ -836,16 +891,23 @@ function wireSettings(b) {
     setChip(chipS, 'Echtzeitpreise', h && h.ok ? (h.shopping || !!getSerpKey()) : 'down');
     refreshServerQuota(h);
   };
-  const srvQ = $('#srv-quota', b);
+  const srvQ = $('#srv-quota', b), devQ = $('#dev-quota', b);
   const refreshServerQuota = async (h) => {
-    srvQ.hidden = true;
+    srvQ.hidden = true; devQ.hidden = true;
     if (!h || !h.ok || !h.shopping) return;
     try {
       const q = await getShoppingQuota(getAiEndpoint(), { key: '', cache: false });
       if (!b.isConnected) return;
-      srvQ.className = 'quota-line' + (q.exhausted ? ' out' : q.warn ? ' warn' : '');
-      srvQ.textContent = Number.isFinite(q.perMonth) ? `Gemeinsames Kontingent: noch ${q.left} von ${q.perMonth} diesen Monat` : `Gemeinsames Kontingent: noch ${q.left} Suchen diesen Monat`;
-      srvQ.hidden = false;
+      if (Number.isFinite(q.left)) {
+        srvQ.className = 'quota-line' + (q.exhausted ? ' out' : q.warn ? ' warn' : '');
+        srvQ.textContent = Number.isFinite(q.perMonth) ? `Gemeinsames Kontingent: noch ${q.left} von ${q.perMonth} diesen Monat` : `Gemeinsames Kontingent: noch ${q.left} Suchen diesen Monat`;
+        srvQ.hidden = false;
+      }
+      if (q.device && !getSerpKey()) {
+        devQ.className = 'quota-line' + (q.device.exhausted ? ' out' : q.device.warn ? ' warn' : '');
+        devQ.textContent = `Auf diesem Gerät: noch ${q.device.left} von ${q.device.limit} Echtzeit-Suchen diesen Monat`;
+        devQ.hidden = false;
+      }
     } catch { /* Kontingent unbekannt → nichts anzeigen */ }
   };
   refreshChip();
@@ -898,7 +960,7 @@ function wireSettings(b) {
       if (!b.isConnected) return;
       const of = Number.isFinite(q.perMonth) ? ` von ${q.perMonth}` : '';
       const ren = renewText(q);
-      kshow(q.exhausted ? 'err' : q.warn ? 'warn' : 'ok', `Noch ${q.left}${of} Suchen${q.plan ? ` (Plan ${q.plan})` : ''}${ren ? ` · Erneuerung am ${ren}` : ''}`);
+      kshow(q.exhausted ? 'err' : q.warn ? 'warn' : 'ok', `Noch ${Number.isFinite(q.left) ? q.left : '?'}${of} Suchen${q.plan ? ` (Plan ${q.plan})` : ''}${ren ? ` · Erneuerung am ${ren}` : ''}`);
     } catch (err) {
       kshow('err', err && err.serverMessage ? err.serverMessage : err && err.timeout ? 'Keine Antwort (Zeitüberschreitung).' : 'Kontingent konnte nicht geprüft werden.');
     }

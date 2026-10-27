@@ -7,7 +7,7 @@
 //   alles andere (z. B. CDN-Module, TF-Modellgewichte): stale-while-revalidate
 //   *.workers.dev (ScanDeals-Server: /identify, /health, /prices, /shopping, /shopping/quota) und alle Nicht-GET-Requests: nie gecacht, direkt ans Netz
 
-const CACHE = 'scandeals-v10';
+const CACHE = 'scandeals-v11';
 
 const SHELL = [
   './',
