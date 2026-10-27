@@ -47,3 +47,22 @@ export function setSerpKey(v) {
     if (n) localStorage.setItem(SERP_KEY, n); else localStorage.removeItem(SERP_KEY);
   } catch { /* ignorieren */ }
 }
+
+/** Anonyme Geräte-ID (für das Limit pro Gerät am Server). Einmal erzeugt, in localStorage; ohne Storage pro Sitzung im Speicher. */
+const DEV_KEY = 'scandeals.deviceId';
+const DEV_RE = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32,64})$/i;
+let memDeviceId = '';
+function makeDeviceId() {
+  try { if (crypto.randomUUID) return crypto.randomUUID(); } catch { /* weiter */ }
+  const a = new Uint8Array(16);
+  try { crypto.getRandomValues(a); } catch { for (let i = 0; i < a.length; i++) a[i] = Math.floor(Math.random() * 256); }
+  return [...a].map((x) => x.toString(16).padStart(2, '0')).join('');
+}
+export function getDeviceId() {
+  try { const v = localStorage.getItem(DEV_KEY); if (v && DEV_RE.test(v)) return v; } catch { /* ignorieren */ }
+  if (memDeviceId) return memDeviceId;
+  const id = makeDeviceId();
+  memDeviceId = id;
+  try { localStorage.setItem(DEV_KEY, id); } catch { /* nur im Speicher */ }
+  return id;
+}

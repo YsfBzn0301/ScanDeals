@@ -1,5 +1,5 @@
 // ScanDeals – Datenzugriff und reine Hilfsfunktionen
-import { getSerpKey } from './config.js';
+import { getSerpKey, getDeviceId } from './config.js';
 export const OFF_FIELDS = 'code,product_name,product_name_de,brands,quantity,image_front_small_url';
 export const OFF_FIELDS_DETAIL = OFF_FIELDS + ',nutriments,nutrition_data_per,serving_size,serving_quantity';
 // API v3.6 (Produktabruf per Barcode); nutrition = neue Nährwert-Struktur, selected_images = Bild-URLs
@@ -650,8 +650,7 @@ export async function getShoppingPrices(endpoint, { q, brand, qty, gtin } = {}, 
   if (qty) params.set('qty', String(qty));
   if (gtin) params.set('gtin', String(gtin));
   if (cachedOnly) params.set('cached_only', '1');
-  const key = getSerpKey();
-  const data = await fetchJson(`${endpoint}/shopping?${params}`, timeout, signal, key ? { 'X-SerpApi-Key': key } : undefined);
+  const data = await fetchJson(`${endpoint}/shopping?${params}`, timeout, signal, shopHeaders(getSerpKey()));
   const quota = normQuota(data && data.quota);
   if (cachedOnly && data && typeof data === 'object' && !Array.isArray(data.results)) return { results: null, cached: false, quota };
   if (!data || typeof data !== 'object' || !Array.isArray(data.results)) throw new Error('Ungültige Antwort');
@@ -682,6 +681,11 @@ export async function getShoppingPrices(endpoint, { q, brand, qty, gtin } = {}, 
 }
 
 // ----- Kontingent (SerpApi) -----
+/** Header für /shopping und /shopping/quota: anonyme Geräte-ID, optional eigener SerpApi-Schlüssel. */
+function shopHeaders(key) {
+  return { 'X-Device-Id': getDeviceId(), ...(key ? { 'X-SerpApi-Key': key } : {}) };
+}
+
 const QUOTA_KEY = 'scandeals.quota';
 const QUOTA_TTL = 5 * 60 * 1000;
 
@@ -690,26 +694,45 @@ export function normQuota(q) {
   if (!q || typeof q !== 'object') return null;
   const n = (v) => (v === null || v === undefined || v === '' ? NaN : Number(v));
   const left = n(q.left);
-  if (!isFinite(left)) return null;
+  const dv = q.device && typeof q.device === 'object' ? q.device : null;
+  const dl = dv ? n(dv.limit) : NaN, du = dv ? n(dv.used) : NaN, dleft = dv ? n(dv.left) : NaN;
+  const device = dv && isFinite(dl) && isFinite(dleft) ? {
+    limit: dl,
+    used: isFinite(du) ? du : Math.max(0, dl - dleft),
+    left: Math.max(0, Math.floor(dleft)),
+    warn: dv.warn === true,
+    exhausted: dv.exhausted === true || dleft <= 0,
+    resets: typeof dv.resets === 'string' && !isNaN(Date.parse(dv.resets)) ? dv.resets : '',
+  } : null;
+  if (!isFinite(left) && !device) return null;
   const per = n(q.per_month), used = n(q.used);
   const renews = typeof q.renews === 'string' && !isNaN(Date.parse(q.renews)) ? q.renews : '';
+  const known = isFinite(left); // Plan-Felder können null sein – dann zählt device
   return {
     source: q.key_source === 'user' ? 'user' : 'server',
     plan: String(q.plan_name || '').slice(0, 60),
     perMonth: isFinite(per) ? per : NaN,
-    left: Math.max(0, Math.floor(left)),
+    left: known ? Math.max(0, Math.floor(left)) : NaN,
     used: isFinite(used) ? used : NaN,
     renews,
-    warn: q.warn === true,
-    exhausted: q.exhausted === true || left <= 0,
+    warn: known && q.warn === true,
+    exhausted: known && (q.exhausted === true || left <= 0),
+    device: q.key_source === 'user' ? null : device,
   };
+}
+
+/** Neues Kontingent mit altem zusammenführen: fehlen im neuen die Plan-Felder, bleiben die alten, device kommt aus dem neuen. */
+export function mergeQuota(old, nu) {
+  if (!nu) return old || null;
+  if (Number.isFinite(nu.left) || !old) return nu;
+  return { ...old, device: nu.device };
 }
 
 /** Gecachtes Kontingent für den aktuellen Server/Schlüssel (5 min, sessionStorage) oder null. */
 export function readQuotaCache(endpoint) {
   try {
     const c = JSON.parse(sessionStorage.getItem(QUOTA_KEY) || 'null');
-    if (c && c.ep === endpoint && c.own === !!getSerpKey() && Date.now() - c.ts < QUOTA_TTL) return c.data;
+    if (c && c.ep === endpoint && c.own === !!getSerpKey() && Date.now() - c.ts < QUOTA_TTL && c.data && Number.isFinite(c.data.left)) return c.data;
   } catch { /* ignorieren */ }
   return null;
 }
@@ -724,7 +747,7 @@ export function writeQuotaCache(endpoint, data) {
 export async function getShoppingQuota(endpoint, { key, force = false, cache = true, timeout = 8000, signal } = {}) {
   const k = key === undefined ? getSerpKey() : key;
   if (cache && !force && key === undefined) { const c = readQuotaCache(endpoint); if (c) return c; }
-  const d = await fetchJson(`${endpoint}/shopping/quota`, timeout, signal, k ? { 'X-SerpApi-Key': k } : undefined);
+  const d = await fetchJson(`${endpoint}/shopping/quota`, timeout, signal, shopHeaders(k));
   const q = normQuota(d);
   if (!q) throw new Error('Ungültige Antwort');
   if (cache && key === undefined) writeQuotaCache(endpoint, q);
