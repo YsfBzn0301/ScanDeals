@@ -375,6 +375,19 @@ html.ai-on .ai-dot { opacity: 1; transform: scale(1); }
 .seg[data-mode="all"] .seg-thumb { transform: translate3d(100%, 0, 0); }
 .seg button { position: relative; z-index: 1; min-height: 40px; border: 0; background: none; border-radius: 20px; font-size: 14px; font-weight: 650; color: var(--muted); cursor: pointer; transition: color .25s; padding: 0 8px; }
 .seg button[aria-pressed="true"] { color: var(--text); }
+.seg[data-mode="serving"] .seg-thumb { transform: translate3d(100%, 0, 0); }
+/* ---------- Nährwerte ---------- */
+.nw-card { padding: 14px 16px 12px; border-radius: var(--r-md); display: flex; flex-direction: column; gap: 10px; }
+.nw-seg button { min-height: 36px; font-size: 13px; padding: 0 6px; }
+.nw-ref { font-size: 14px; font-weight: 650; color: var(--muted); }
+.nw-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.nw-table tr + tr { border-top: 1px solid rgba(255, 255, 255, .08); }
+.nw-table th, .nw-table td { padding: 10px 0; font-size: 15px; line-height: 1.3; vertical-align: baseline; }
+.nw-table th { text-align: left; font-weight: 500; padding-right: 12px; overflow-wrap: anywhere; }
+.nw-table td { text-align: right; font-weight: 650; white-space: nowrap; }
+.nw-table tr.sub th, .nw-table tr.sub td { color: var(--muted); font-weight: 400; font-size: 14px; padding-top: 8px; padding-bottom: 8px; }
+.nw-table tr.sub th { padding-left: 16px; }
+.nw-src { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .list-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
 .toolbar { margin-bottom: 0; }
 .chip {

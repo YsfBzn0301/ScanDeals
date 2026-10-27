@@ -1,5 +1,6 @@
 // ScanDeals – Datenzugriff und reine Hilfsfunktionen
 export const OFF_FIELDS = 'code,product_name,product_name_de,brands,quantity,image_front_small_url';
+export const OFF_FIELDS_DETAIL = OFF_FIELDS + ',nutriments,nutrition_data_per,serving_size,serving_quantity';
 export const PRODUCT_HOSTS = [
   'https://world.openfoodfacts.org',
   'https://world.openproductsfacts.org',
@@ -42,7 +43,65 @@ export function normalizeProduct(p) {
     brand,
     quantity: (p.quantity || '').trim(),
     image: p.image_front_small_url || '',
+    nutrition: extractNutrition(p),
   };
+}
+
+// ---------- Nährwerte ----------
+const NUTRI_ROWS = [
+  ['fat', 'Fett', 0], ['saturated-fat', 'davon gesättigte Fettsäuren', 1],
+  ['carbohydrates', 'Kohlenhydrate', 0], ['sugars', 'davon Zucker', 1],
+  ['fiber', 'Ballaststoffe', 0], ['proteins', 'Eiweiß', 0], ['salt', 'Salz', 0],
+];
+
+function nutriNum(v) {
+  if (v === null || v === undefined || v === '' || typeof v === 'boolean') return null;
+  const n = Number(v);
+  return isFinite(n) ? n : null;
+}
+function macroVal(n, max) { return n !== null && n >= 0 && n <= max ? n : null; }
+
+/** Nährwerte aus einem OFF-Produkt; null, wenn nichts Brauchbares vorhanden ist. */
+export function extractNutrition(p) {
+  const n = p && typeof p === 'object' ? p.nutriments : null;
+  if (!n || typeof n !== 'object') return null;
+  const isMl = /(^|[\d\s.,])\s*(ml|cl|l)\s*\.?$/i.test(String(p.quantity || '').trim());
+  const sq = nutriNum(p.serving_quantity);
+  const maxS = sq !== null && sq > 0 ? sq : 1000; // Portion kann nicht mehr Makros enthalten als ihre Menge
+  const rows = [];
+  // Energie
+  const energy = (suffix, max) => {
+    const kcal = macroVal(nutriNum(n['energy-kcal' + suffix]), 9 * max);
+    let kj = nutriNum(n['energy-kj' + suffix]);
+    if (kj === null) kj = nutriNum(n['energy' + suffix]);
+    kj = macroVal(kj, 38 * max);
+    return kcal === null && kj === null ? null : { kj, kcal };
+  };
+  const e100 = energy('_100g', 100), eS = energy('_serving', maxS);
+  if (e100 || eS) rows.push({ key: 'energy', label: 'Energie', unit: 'kJ/kcal', per100: e100, perServing: eS, indent: false });
+  for (const [key, label, ind] of NUTRI_ROWS) {
+    const a = macroVal(nutriNum(n[key + '_100g']), 100);
+    const b = macroVal(nutriNum(n[key + '_serving']), maxS);
+    if (a !== null || b !== null) rows.push({ key, label, unit: 'g', per100: a, perServing: b, indent: !!ind });
+  }
+  if (!rows.length) return null;
+  const hasServing = rows.some((r) => r.perServing !== null);
+  return {
+    per: isMl ? '100ml' : '100g',
+    serving: hasServing ? String(p.serving_size || '').trim() : '',
+    rows,
+  };
+}
+
+/** Deutsche Zahlenformatierung für Nährwert-Zellen; null/undefined → „–“. */
+export function formatNutrient(row, v) {
+  if (v === null || v === undefined) return '–';
+  if (row.key === 'energy') {
+    const part = (x, u) => (x === null ? '' : `${Math.round(x).toLocaleString('de-DE')} ${u}`);
+    return [part(v.kj, 'kJ'), part(v.kcal, 'kcal')].filter(Boolean).join(' / ');
+  }
+  if (v > 0 && v < 0.1) return '< 0,1 g';
+  return `${new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 }).format(v)} g`;
 }
 
 /** Produkt per Barcode; null wenn in keiner Datenbank gefunden. */
@@ -51,7 +110,7 @@ export async function getProduct(code) {
   let anySuccess = false;
   for (const host of PRODUCT_HOSTS) {
     try {
-      const data = await fetchJson(`${host}/api/v2/product/${encodeURIComponent(code)}.json?fields=${OFF_FIELDS}`);
+      const data = await fetchJson(`${host}/api/v2/product/${encodeURIComponent(code)}.json?fields=${OFF_FIELDS_DETAIL}`);
       anySuccess = true;
       if (data && data.status === 1 && data.product) {
         return normalizeProduct({ code, ...data.product, code: data.product.code || code });

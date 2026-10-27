@@ -1,7 +1,7 @@
 // ScanDeals – App-Logik (Routing, Scanner-UI, Bottom-Sheet-Ansichten, Verlauf)
 import {
   getProduct, searchProducts, getPrices, aggregatePrices, formatPrice, formatDate, relativeDate,
-  mapsLinkForBranch, mapsLinkAllBranches, onlineSearchLinks, reportPriceLink, fetchJson,
+  mapsLinkForBranch, mapsLinkAllBranches, formatNutrient, onlineSearchLinks, reportPriceLink, fetchJson,
 } from './api.js';
 import { openCamera, startBarcodeLoop, stopBarcodeLoop, stopScanner, hasTorch, setTorch } from './scanner.js';
 import { getAiEndpoint, setAiEndpoint, normalizeEndpoint, isValidEndpoint, getMode, setMode, MODES } from './config.js';
@@ -166,6 +166,45 @@ function onlineSection(p) {
     `<a class="chip" href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}${icon('i-ext')}</a>`).join('')}</div></section>`;
 }
 
+function nutritionTable(nu, mode) {
+  const key = mode === 'serving' ? 'perServing' : 'per100';
+  return `<table class="nw-table"><tbody>${nu.rows.map((r) =>
+    `<tr class="${r.indent ? 'sub' : ''}"><th scope="row">${esc(r.label)}</th><td>${esc(formatNutrient(r, r[key]))}</td></tr>`).join('')}</tbody></table>`;
+}
+
+function nutritionSection(p) {
+  const nu = p.nutrition;
+  if (!nu || !nu.rows || !nu.rows.length) return '';
+  const unit = nu.per === '100ml' ? '100 ml' : '100 g';
+  const hasServing = nu.rows.some((r) => r.perServing !== null && r.perServing !== undefined);
+  const sLabel = nu.serving ? `pro Portion (${esc(nu.serving)})` : 'pro Portion';
+  const head = hasServing
+    ? `<div class="seg nw-seg" role="group" aria-label="Bezugsmenge" data-mode="100">
+        <span class="seg-thumb" aria-hidden="true"></span>
+        <button type="button" data-mode="100" aria-pressed="true">pro ${esc(unit)}</button>
+        <button type="button" data-mode="serving" aria-pressed="false">${sLabel}</button></div>`
+    : `<p class="nw-ref">pro ${esc(unit)}</p>`;
+  return `<section class="block stagger nw" style="--i:5" aria-label="Nährwerte"><h2 class="label">Nährwerte</h2>
+    <div class="nw-card surface">${head}<div class="nw-body">${nutritionTable(nu, '100')}</div>
+    <p class="nw-src">Quelle: Open Food Facts</p></div></section>`;
+}
+
+function wireNutrition(b, p) {
+  const seg = $('.nw-seg', b);
+  const body = $('.nw-body', b);
+  if (!seg || !body) return;
+  let mode = '100';
+  seg.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-mode]');
+    if (!btn || btn.dataset.mode === mode) return;
+    mode = btn.dataset.mode;
+    haptic(8);
+    seg.dataset.mode = mode;
+    seg.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === btn)));
+    liquidSwap(body, nutritionTable(p.nutrition, mode));
+  });
+}
+
 function footerBlock(p, withReport) {
   return `<div class="foot">${withReport ? `<a class="link" href="${esc(reportPriceLink(p.code))}" target="_blank" rel="noopener">Preis selbst melden</a>` : ''}
     <p>Quelle: Open Prices / Open Food Facts (Community, ODbL). Preise können abweichen.</p></div>`;
@@ -214,7 +253,7 @@ function renderProduct(p, items, back) {
   let current = null, all = null, best = null;
   if (items === null) {
     bodyHtml = `<div class="state surface">${icon('i-alert', 'state-ico')}<p class="state-t">Preise gerade nicht verfügbar.</p>
-      <p class="state-s">Prüfe die Online-Links unten.</p></div>${onlineSection(p)}${footerBlock(p, false)}`;
+      <p class="state-s">Prüfe die Online-Links unten.</p></div>${nutritionSection(p)}${onlineSection(p)}${footerBlock(p, false)}`;
   } else {
     current = aggregatePrices(items, { includeOld: false });
     all = aggregatePrices(items, { includeOld: true });
@@ -232,14 +271,14 @@ function renderProduct(p, items, back) {
       bodyHtml = heroHtml(best, best, priciest)
         + toolbar
         + `<div id="plist" class="plist" aria-live="polite">${listHtml(rows, best.name)}</div>`
-        + onlineSection(p) + footerBlock(p, true);
+        + nutritionSection(p) + onlineSection(p) + footerBlock(p, true);
     } else {
       bodyHtml = `${all.rows.length ? toolbar : ''}<div id="plist" class="plist">
         <div class="state surface stagger" style="--i:1">${icon('i-bag', 'state-ico')}
         <p class="state-t">Noch keine aktuellen Preise gemeldet.</p>
         <p class="state-s">Für dieses Produkt gibt es noch keine ${items.length ? 'aktuellen ' : ''}Preise in der Community-Datenbank. Schau online nach – oder melde selbst einen Preis.</p>
         <a class="btn primary" href="${esc(reportPriceLink(p.code))}" target="_blank" rel="noopener">Preis selbst melden</a></div></div>`
-        + onlineSection(p) + footerBlock(p, false);
+        + nutritionSection(p) + onlineSection(p) + footerBlock(p, false);
     }
   }
   showSheet(productHead(p), bodyHtml, {
@@ -253,6 +292,7 @@ function renderProduct(p, items, back) {
 
 function wireProductBody(b, p, items, current, all, best) {
   const list = $('#plist', b);
+  wireNutrition(b, p);
   // Karten auf-/zuklappen (smooth height via grid-rows)
   b.onclick = (e) => {
     const btn = e.target.closest('.pc-main:not(.static)');
@@ -266,7 +306,7 @@ function wireProductBody(b, p, items, current, all, best) {
     if (open) setTimeout(() => card.scrollIntoView({ block: 'nearest', behavior: isReduced() ? 'auto' : 'smooth' }), 260);
   };
   // Segment: Aktuell | Alle
-  const seg = $('.seg', b);
+  const seg = $('.toolbar .seg', b);
   if (seg && list) {
     let mode = 'cur';
     seg.addEventListener('click', (e) => {
