@@ -127,7 +127,15 @@ const SOURCE_RANK = { manufacturer: 0, packaging: 1 };
 function v3Raw(nut) {
   if (!nut || typeof nut !== 'object') return null;
   const v = nutriNum(nut.value);
-  return v !== null ? v : nutriNum(nut.value_computed);
+  if (v !== null) return v;
+  const c = nutriNum(nut.value_computed);
+  if (c !== null) return c;
+  // Notfalls den eingegebenen Text lesen, z. B. "0,5" oder "< 0.1"
+  if (typeof nut.value_string === 'string') {
+    const m = nut.value_string.replace(',', '.').match(/-?\d+(?:\.\d+)?/);
+    if (m) return nutriNum(m[0]);
+  }
+  return null;
 }
 function v3Mod(nut) { return MODIFIERS.includes(nut && nut.modifier) ? nut.modifier : undefined; }
 function unitOf(nut) { return String(nut.unit == null ? '' : nut.unit).trim().toLowerCase(); }
