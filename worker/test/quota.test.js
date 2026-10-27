@@ -82,7 +82,7 @@ test("/shopping/quota: Form, kein Key-Leak, 5 min Cache für Server-Schlüssel",
   for (const bad of ["LEAK", SERVER_KEY, "leak@example.com", "api_key"]) assert.ok(!text.includes(bad), bad);
   assert.deepEqual(JSON.parse(text), {
     key_source: "server", plan_name: "Free Plan", per_month: 250, left: 100, used: 150,
-    hourly_limit: 50, hourly_used: 3, renews: "2026-11-01", warn: false, exhausted: false,
+    hourly_limit: 50, hourly_used: 3, renews: "2026-11-01", warn: false, exhausted: false, device: null,
   });
   assert.equal(n.calls.account[0].searchParams.get("api_key"), SERVER_KEY);
   await get(h, "/shopping/quota");

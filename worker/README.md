@@ -93,6 +93,24 @@ Der Worker kennt das monatliche SerpApi-Kontingent (Account API `account.json`, 
 - `/shopping?...&cached_only=1` antwortet nur aus dem Cache: Treffer wie gewohnt plus `cached: true`, sonst `200 {cached: false}` ohne SerpApi-Aufruf.
 - **Eigener Schlüssel:** Der Header `X-SerpApi-Key` (20 bis 100 Zeichen, nur `A-Za-z0-9`) hat Vorrang vor `SERPAPI_KEY`; die Antworten tragen dann `key_source: "user"`. Ein falsches Format ergibt 400. Mit eigenem Schlüssel funktioniert `/shopping` auch ohne Server-Secret (`features.shopping` bleibt davon unberührt). Schlüssel werden nie geloggt, nie zurückgegeben und nie in Cache-Schlüssel aufgenommen; Antworten für fremde Schlüssel werden nicht gecacht, nur die gemeinsame Ergebnisliste je Suchbegriff.
 
+## Limit pro Gerät
+
+Das gemeinsame SerpApi-Kontingent (Server-Schlüssel) wird pro Gerät begrenzt: Standard **10 echte Suchen pro Kalendermonat (UTC)**. Gecachte Antworten, `cached_only`-Anfragen und Suchen mit eigenem Schlüssel (`X-SerpApi-Key`) zählen nicht.
+
+**Einrichtung**
+
+1. KV-Namespace anlegen: `npx wrangler kv namespace create USAGE`
+2. In `wrangler.toml` die drei auskommentierten Zeilen des Blocks `[[kv_namespaces]]` einkommentieren (`#` entfernen) und die ausgegebene ID statt `HIER_ID_EINTRAGEN` eintragen, dann `npx wrangler deploy`.
+3. Prüfen: `https://<worker>/health` muss `"device_limit": true` melden.
+
+> ⚠️ Solange der Block auskommentiert ist, gilt **kein** Gerätelimit – ein einzelnes Gerät könnte dann das ganze gemeinsame Kontingent verbrauchen. Richte den KV-Speicher ein, bevor du `SERPAPI_KEY` setzt.
+
+**Variablen** (optional, `0` = aus): `SERP_DEVICE_LIMIT` (10), `SERP_DEVICE_WARN` (2, Warnung bei höchstens so vielen übrigen Suchen), `SERP_IP_LIMIT` (30, großzügigeres Limit pro IP-Adresse).
+
+**Wie es funktioniert:** Die App sendet eine anonyme, zufällige Geräte-ID im Header `X-Device-Id` (UUID oder 32 bis 64 Hex-Zeichen, sonst 400). Wer den Browser-Speicher löscht, bekommt eine neue ID; deshalb gilt zusätzlich das Limit pro IP. Ist es erreicht, antwortet `/shopping` mit 429 und `code: "device_limit"`, ohne SerpApi aufzurufen. Das Kontingent-Objekt enthält `device: {limit, used, left, warn, exhausted, resets}` (nur bei Server-Schlüssel und aktivem Limit, sonst `null`).
+
+**Datenschutz:** Im KV stehen nur gekürzte SHA-256-Hashes (`dev:<hash>:<JJJJ-MM>`, `ip:<hash>:<JJJJ-MM>`) mit der Anzahl als Wert. Rohe IDs und IP-Adressen werden weder gespeichert noch geloggt oder zurückgegeben. Die Zähler verfallen nach 40 Tagen. KV ist eventuell konsistent; bei gleichzeitigen Suchen kann ein Zähler minimal zu niedrig bleiben.
+
 ## Erlaubte Webseiten (CORS) ändern
 
 Nur Seiten aus `ALLOWED_ORIGINS` dürfen den Worker nutzen. Standard in `wrangler.toml`:
@@ -121,7 +139,7 @@ Die automatischen Tests (ohne Netzwerk, ohne Key) startest du mit `npm test`.
 
 ## Schnittstellen
 
-- `GET /health` gibt `{ok, model, configured, features: {ai, prices, shopping}}` zurück.
+- `GET /health` gibt `{ok, model, configured, features: {ai, prices, shopping, device_limit}}` zurück.
 - `GET /prices?q=…&brand=…&qty=…` liefert Tagespreise (siehe unten), `GET /prices/stores` die Läden-Liste der Open Price Engine.
 - `GET /shopping?q=…&brand=…&qty=…&gtin=…` liefert Google-Shopping-Preise (siehe oben).
 - `POST /identify` mit `{"image": "<Base64-JPEG ohne Präfix>", "hint": "mouse"}` gibt `{is_product, name, brand, model, category, confidence, search_query, barcode}` zurück. Fehler kommen als `{"error": "…"}` mit passendem Statuscode (400, 403, 413, 422, 429, 500, 502).

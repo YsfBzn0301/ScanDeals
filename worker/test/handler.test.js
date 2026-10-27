@@ -58,7 +58,7 @@ test("Origin wird exakt verglichen (Präfix reicht nicht)", async () => {
 test("/health -> ok, model, configured", async () => {
   const res = await createHandler()(req("/health", { method: "GET" }), ENV);
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { ok: true, model: "claude-opus-5-5", configured: true, features: { ai: true, prices: false, shopping: false } });
+  assert.deepEqual(await res.json(), { ok: true, model: "claude-opus-5-5", configured: true, features: { ai: true, prices: false, shopping: false, device_limit: false } });
   const res2 = await createHandler()(req("/health", { method: "GET" }), { ...ENV, ANTHROPIC_API_KEY: undefined });
   assert.equal((await res2.json()).configured, false);
 });

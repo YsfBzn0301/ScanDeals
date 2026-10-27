@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { lookupShopping, SerpError, cacheSeconds } from "./shopping.js";
+import { pickDeviceId, readUsage, bumpUsage, deviceConfig, deviceObject } from "./device.js";
 import { pickKey, computeQuota, fetchAccount, readServerQuota, writeServerQuota, decrement, QuotaError } from "./quota.js";
 import { lookupPrices, fetchStoresList, OpeError, CACHE_TTL_S, CACHE_TTL_PARTIAL_S } from "./prices.js";
 
@@ -36,7 +37,7 @@ function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, X-SerpApi-Key",
+    "Access-Control-Allow-Headers": "Content-Type, X-SerpApi-Key, X-Device-Id",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
@@ -111,6 +112,7 @@ const defaultCache = () => (typeof caches !== "undefined" ? caches.default : nul
 export function createHandler(makeClient = defaultMakeClient, opts = {}) {
   const fetchFn = opts.fetch || defaultFetch;
   const getCache = () => ("cache" in opts ? opts.cache : defaultCache());
+  const now = () => (opts.now ? new Date(opts.now()) : new Date());
   const hits = new Map(); // ip -> Zeitstempel[]
 
   function rateLimited(ip) {
@@ -227,16 +229,37 @@ export function createHandler(makeClient = defaultMakeClient, opts = {}) {
     }
   }
 
-  async function handleQuota(env, sel, origin) {
+  // Quota-Objekt inkl. device (nur bei Server-Schlüssel und aktivem Limit, sonst null).
+  function withDevice(q, usage, sel) {
+    return { ...q, device: sel.source === "server" && usage ? usage.device : null };
+  }
+
+  // Ohne Roh-Kontingent (nicht im Cache): nur der Geräte-Stand, übrige Felder unbekannt.
+  function deviceOnlyQuota(sel, usage) {
+    return {
+      key_source: sel.source, plan_name: null, per_month: null, left: null, used: null,
+      hourly_limit: null, hourly_used: null, renews: null, warn: false, exhausted: false,
+      device: usage ? usage.device : null,
+    };
+  }
+
+  async function handleQuota(env, sel, origin, usage) {
     try {
       const { raw } = await loadRaw(sel, safeCache());
-      return json(computeQuota(raw, env, sel.source), 200, origin);
+      return json(withDevice(computeQuota(raw, env, sel.source), usage, sel), 200, origin);
     } catch (err) {
       return quotaFailure(err, origin);
     }
   }
 
-  async function handleShopping(url, env, sel, origin) {
+  // Aktueller Stand für Cache-Treffer/cached_only: nur wenn ein Geräte-Limit aktiv ist (Cache-/KV-Lesen kostet nichts).
+  async function stateQuota(env, sel, cache, usage) {
+    if (sel.source !== "server" || !usage || !usage.device) return null;
+    const hit = await readServerQuota(cache);
+    return withDevice(hit ? computeQuota(hit.raw, env, "server") : deviceOnlyQuota(sel, usage), usage, sel);
+  }
+
+  async function handleShopping(url, env, sel, origin, usage) {
     const clean = (v) => String(v ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
     const q = clean(url.searchParams.get("q"));
     const brand = clean(url.searchParams.get("brand"));
@@ -256,18 +279,40 @@ export function createHandler(makeClient = defaultMakeClient, opts = {}) {
       const norm = [query.q, query.brand, query.qty, query.gtin].map((v) => v.toLowerCase());
       cacheKey = new Request("https://scandeals-cache.invalid/shopping?k=" + encodeURIComponent(norm.join("|")));
       const hit = cache && (await cache.match(cacheKey));
-      if (hit) return json({ ...(await hit.json()), cached: true }, 200, origin);
+      if (hit) {
+        const body = { ...(await hit.json()), cached: true };
+        const dq = await stateQuota(env, sel, cache, usage);
+        return json(dq ? { ...body, quota: dq } : body, 200, origin);
+      }
     } catch {
       /* Cache ist optional */
     }
-    if (cachedOnly) return json({ cached: false }, 200, origin);
+    if (cachedOnly) {
+      const dq = await stateQuota(env, sel, cache, usage);
+      return json(dq ? { cached: false, quota: dq } : { cached: false }, 200, origin);
+    }
+
+    // Gerät-/IP-Limit gilt nur für echte Suchen mit dem Server-Schlüssel.
+    if (sel.source === "server" && usage && (usage.deviceBlocked || usage.ipBlocked)) {
+      const cachedRaw = await readServerQuota(cache);
+      const q0 = cachedRaw ? computeQuota(cachedRaw.raw, env, "server") : deviceOnlyQuota(sel, usage);
+      return json(
+        {
+          error: usage.deviceBlocked ? "Dein monatliches Limit für Echtzeit-Suchen ist erreicht" : "Limit für dieses Netzwerk erreicht",
+          code: "device_limit",
+          quota: withDevice(q0, usage, sel),
+        },
+        429,
+        origin,
+      );
+    }
 
     // Kontingent prüfen (account.json zählt nicht); Fehler blockieren die Suche nicht.
     let acct = null;
     try {
       acct = await loadRaw(sel, cache);
       const q0 = computeQuota(acct.raw, env, sel.source);
-      if (q0.exhausted) return json({ error: QUOTA_EXHAUSTED, code: "quota_exhausted", quota: q0 }, 429, origin);
+      if (q0.exhausted) return json({ error: QUOTA_EXHAUSTED, code: "quota_exhausted", quota: withDevice(q0, usage, sel) }, 429, origin);
     } catch {
       acct = null;
     }
@@ -276,7 +321,7 @@ export function createHandler(makeClient = defaultMakeClient, opts = {}) {
     try {
       out = await lookupShopping(fetchFn, env, query, sel.key);
     } catch (err) {
-      return serpFailure(err, origin, acct ? computeQuota({ ...acct.raw, left: 0 }, env, sel.source) : null);
+      return serpFailure(err, origin, acct ? withDevice(computeQuota({ ...acct.raw, left: 0 }, env, sel.source), usage, sel) : null);
     }
     const payload = {
       query: { q: query.q, brand: query.brand, qty: query.qty, gtin: query.gtin },
@@ -296,11 +341,22 @@ export function createHandler(makeClient = defaultMakeClient, opts = {}) {
         /* ignorieren */
       }
     }
+    // Erfolgreiche echte Suche mit Server-Schlüssel: Gerät- und IP-Zähler erhöhen.
+    let after = usage;
+    if (sel.source === "server" && usage && (usage.keys.dev || usage.keys.ip)) {
+      await bumpUsage(env, usage);
+      after = {
+        ...usage,
+        device: usage.keys.dev ? deviceObject(usage.cfg, usage.devUsed + 1, now()) : null,
+      };
+    }
     let quota = null;
     if (acct) {
       const raw = decrement(acct.raw);
-      quota = computeQuota(raw, env, sel.source);
+      quota = withDevice(computeQuota(raw, env, sel.source), after, sel);
       if (sel.source === "server") await writeServerQuota(cache, raw, acct.at);
+    } else if (after && after.device) {
+      quota = deviceOnlyQuota(sel, after);
     }
     return json({ ...payload, cached: false, quota }, 200, origin);
   }
@@ -324,7 +380,7 @@ export function createHandler(makeClient = defaultMakeClient, opts = {}) {
           ok: true,
           model: env.MODEL || "claude-opus-5-5",
           configured: Boolean(env.ANTHROPIC_API_KEY),
-          features: { ai: Boolean(env.ANTHROPIC_API_KEY), prices: Boolean(env.OPE_API_KEY), shopping: Boolean(env.SERPAPI_KEY) },
+          features: { ai: Boolean(env.ANTHROPIC_API_KEY), prices: Boolean(env.OPE_API_KEY), shopping: Boolean(env.SERPAPI_KEY), device_limit: deviceConfig(env).enabled },
         },
         200,
         allowed,
@@ -352,7 +408,18 @@ export function createHandler(makeClient = defaultMakeClient, opts = {}) {
       const sel = pickKey(request, env);
       if (sel.invalid) return json({ error: "Ungültiger SerpApi-Schlüssel (Format)" }, 400, allowed);
       if (!sel.key) return json({ error: "Echtzeitpreise sind nicht eingerichtet" }, 503, allowed);
-      return url.pathname === "/shopping/quota" ? handleQuota(env, sel, allowed) : handleShopping(url, env, sel, allowed);
+      const dev = pickDeviceId(request);
+      if (dev.invalid) return json({ error: "Ungültige Geräte-ID" }, 400, allowed);
+      // Zähler nur für den Server-Schlüssel lesen (eigener Schlüssel: kein Limit).
+      let usage = null;
+      if (sel.source === "server" && deviceConfig(env).enabled) {
+        try {
+          usage = await readUsage(env, dev.id, request.headers.get("CF-Connecting-IP"), now());
+        } catch {
+          usage = null;
+        }
+      }
+      return url.pathname === "/shopping/quota" ? handleQuota(env, sel, allowed, usage) : handleShopping(url, env, sel, allowed, usage);
     }
 
     if (url.pathname === "/identify") {

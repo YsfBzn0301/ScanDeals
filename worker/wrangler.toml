@@ -23,3 +23,14 @@ OPE_STORES = '[{"slug":"aldi_sud","name":"Aldi Süd"},{"slug":"lidl","name":"Lid
 # SERP_WARN_PERCENT = "20"   (Standard 20)
 # SERP_WARN_MIN = "25"       (Standard 25)
 # SERP_RESERVE = "0"         (Suchen, die nie verbraucht werden, z. B. 5 als Puffer; Standard 0)
+
+# Limit pro Gerät/IP für echte Suchen mit dem Server-Schlüssel (SerpApi). Alle optional, Defaults in Klammern.
+# SERP_DEVICE_LIMIT = "10"   (echte Suchen pro Gerät und Kalendermonat, UTC; 0 = aus)
+# SERP_DEVICE_WARN = "2"     (Warnung, wenn <= 2 übrig)
+# SERP_IP_LIMIT = "30"       (großzügigeres Limit pro IP-Adresse; 0 = aus)
+# Ohne KV-Binding USAGE ist das Gerätelimit aus. Namespace anlegen mit: npx wrangler kv namespace create USAGE
+# und die ausgegebene ID unten eintragen, dann die drei Zeilen einkommentieren (# entfernen).
+# Solange der Block auskommentiert ist, gilt KEIN Gerätelimit – dringend einrichten, wenn der Server-SerpApi-Schlüssel aktiv ist.
+# [[kv_namespaces]]
+# binding = "USAGE"
+# id = "HIER_ID_EINTRAGEN"
