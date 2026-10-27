@@ -47,6 +47,8 @@ Im Sucher lässt sich zwischen drei Erkennungsmodi wählen:
 
 Beide Datenbanken sind frei verfügbar und stehen unter der **Open Database License (ODbL)**. Die Preisdaten stammen von Nutzerinnen und Nutzern, ScanDeals ist nicht mit Open Food Facts oder Open Prices verbunden. Keine API-Schlüssel nötig.
 
+- **Open Price Engine** (optional, kostenpflichtig): tagesaktuelle Onlineshop-Preise u. a. von Aldi Süd, Lidl, Globus und Alnatura im Abschnitt „Tagesaktuell im Onlineshop“. Läuft nur über den eigenen ScanDeals-Server (Cloudflare Worker) mit eigenem API-Schlüssel – Einrichtung siehe [worker/README.md](./worker/README.md). Abgleich nur über den Produktnamen (keine Barcode-Suche), daher kennzeichnet die App „gleiche Größe“, „andere Größe“ oder „ähnliches Produkt“.
+
 ## Projektstruktur
 
 ```
