@@ -176,12 +176,55 @@ export function onlineSearchLinks(name, code) {
   const q = encodeURIComponent((name || code || '').trim());
   const c = encodeURIComponent(code || name || '');
   return [
+    { label: 'MediaMarkt', url: `https://www.mediamarkt.de/de/search.html?query=${q}` },
+    { label: 'Saturn', url: `https://www.saturn.de/de/search.html?query=${q}` },
+    { label: 'Amazon.de', url: `https://www.amazon.de/s?k=${q}` },
+    { label: 'eBay', url: `https://www.ebay.de/sch/i.html?_nkw=${q}` },
     { label: 'idealo', url: `https://www.idealo.de/preisvergleich/MainSearchProductCategory.html?q=${q}` },
     { label: 'Google Shopping', url: `https://www.google.com/search?tbm=shop&q=${q}` },
-    { label: 'Amazon.de', url: `https://www.amazon.de/s?k=${q}` },
     { label: 'geizhals.de', url: `https://geizhals.de/?fs=${q}` },
     ...(code && name ? [{ label: 'Barcode ' + code + ' (Google Shopping)', url: `https://www.google.com/search?tbm=shop&q=${c}` }] : []),
   ];
+}
+
+/**
+ * KI-Produkterkennung über den eigenen Worker: POST {endpoint}/identify.
+ * Liefert {is_product, name, brand, model, category, confidence, search_query, barcode}.
+ */
+export async function identifyProduct(endpoint, { image, hint } = {}, { timeout = 20000, signal } = {}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeout);
+  if (signal) {
+    if (signal.aborted) ctrl.abort();
+    else signal.addEventListener('abort', () => ctrl.abort(), { once: true });
+  }
+  try {
+    const res = await fetch(`${endpoint}/identify`, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(hint ? { image, hint } : { image }),
+    });
+    let data = null;
+    try { data = await res.json(); } catch { /* kein JSON */ }
+    if (!res.ok) {
+      const err = new Error((data && typeof data.error === 'string' && data.error) || 'HTTP ' + res.status);
+      err.status = res.status;
+      throw err;
+    }
+    if (!data || typeof data !== 'object') throw new Error('Ungültige Antwort');
+    return data;
+  } catch (e) {
+    if (e && e.name === 'AbortError') {
+      const err = new Error(signal && signal.aborted ? 'Abgebrochen' : 'Zeitüberschreitung');
+      err.timeout = !(signal && signal.aborted);
+      err.aborted = !!(signal && signal.aborted);
+      throw err;
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export function reportPriceLink(code) {

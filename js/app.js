@@ -1,9 +1,11 @@
 // ScanDeals – App-Logik (Routing, Scanner-UI, Bottom-Sheet-Ansichten, Verlauf)
 import {
   getProduct, searchProducts, getPrices, aggregatePrices, formatPrice, formatDate, relativeDate,
-  mapsLinkForBranch, mapsLinkAllBranches, onlineSearchLinks, reportPriceLink,
+  mapsLinkForBranch, mapsLinkAllBranches, onlineSearchLinks, reportPriceLink, fetchJson,
 } from './api.js';
-import { startScanner, stopScanner, hasTorch, setTorch } from './scanner.js';
+import { openCamera, startBarcodeLoop, stopBarcodeLoop, stopScanner, hasTorch, setTorch } from './scanner.js';
+import { getAiEndpoint, setAiEndpoint, normalizeEndpoint, isValidEndpoint, getMode, setMode, MODES } from './config.js';
+import { initKi, start as kiStart, stop as kiStop } from './ki.js';
 import { initSheet, openSheet, closeSheet, setContent, isOpen, snapTo, getSnap, getBody } from './sheet.js';
 import { haptic, countUp, liquidSwap, isReduced, sleep } from './motion.js';
 import { runSplash } from './splash.js';
@@ -13,6 +15,8 @@ const HISTORY_KEY = 'scandeals.history';
 let userPos = null;
 let navToken = 0;
 let prevKind = null;
+const KI_KEY = 'scandeals.ki';
+const WORKER_DOCS = 'https://github.com/YsfBzn0301/ScanDeals/tree/main/worker';
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 export const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
@@ -155,7 +159,8 @@ function listHtml(rows, bestName) {
 }
 
 function onlineSection(p) {
-  const links = onlineSearchLinks(p.name + (p.brand && !p.name.includes(p.brand) ? ' ' + p.brand : ''), p.code).slice(0, 4);
+  const wanted = ['idealo', 'Google Shopping', 'Amazon.de', 'geizhals.de'];
+  const links = onlineSearchLinks(p.name + (p.brand && !p.name.includes(p.brand) ? ' ' + p.brand : ''), p.code).filter((l) => wanted.includes(l.label));
   return `<section class="block stagger" style="--i:6"><h2 class="label">Online weitersuchen</h2><div class="chips">${links.map((l) =>
     `<a class="chip" href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}${icon('i-ext')}</a>`).join('')}</div></section>`;
 }
@@ -183,7 +188,7 @@ function runCountUps(root, base = 0) {
 }
 
 async function productView(code, token) {
-  const back = prevKind === 'suche' || prevKind === 'verlauf';
+  const back = ['suche', 'verlauf', 'ki'].includes(prevKind);
   await showSheet(skeletonHead(), skeleton(), { snap: 'half', back });
   try {
     const [product, items] = await Promise.all([
@@ -297,6 +302,121 @@ function wireProductBody(b, p, items, current, all, best) {
   }
 }
 
+// ----- KI-Treffer -----
+const SHOPS = {
+  MediaMarkt: ['#E2001A', 'M'], Saturn: ['#F28C00', 'S'], 'Amazon.de': ['#FF9900', 'a'], eBay: ['#3B7DEB', 'e'],
+  idealo: ['#3E8BFF', 'i'], 'Google Shopping': ['#34A853', 'G'], 'geizhals.de': ['#E8730C', 'g'],
+};
+const SHOP_ORDER = Object.keys(SHOPS);
+
+function loadKiMeta(query) {
+  try {
+    const m = JSON.parse(sessionStorage.getItem(KI_KEY) || 'null');
+    if (m && m.query === query) return m;
+  } catch { /* ignorieren */ }
+  return null;
+}
+function saveKiMeta(m) {
+  try { sessionStorage.setItem(KI_KEY, JSON.stringify(m)); } catch { /* Thumbnail evtl. zu groß */ try { sessionStorage.setItem(KI_KEY, JSON.stringify({ ...m, thumb: '' })); } catch { /* ignorieren */ } }
+}
+const safeDataImg = (u) => (/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(u || '') ? u : '');
+
+function kiHead(meta, query) {
+  const name = meta && meta.name ? meta.name : query;
+  const sub = [meta && meta.brand, meta && meta.category].filter(Boolean).join(' · ');
+  const conf = meta && isFinite(meta.confidence) ? Math.round(Math.min(1, Math.max(0, meta.confidence)) * 100) : null;
+  const img = safeDataImg(meta && meta.thumb);
+  const low = meta && meta.confidence < 0.5;
+  return `<div class="ph">${img ? `<span class="thumb lg ki-thumb"><img class="thumb-img" src="${esc(img)}" alt="Ausschnitt der Kamera"></span>` : `<span class="thumb lg">${icon('i-spark')}</span>`}
+    <div class="ph-t"><h1 id="sheet-title">${esc(name)}</h1>${sub ? `<p class="ph-s">${esc(sub)}</p>` : ''}
+    <p class="ph-c"><span class="badge kibadge${low ? ' low' : ''}">${icon('i-spark')}${meta && meta.source === 'claude' ? 'KI-Treffer' : 'Allgemeine Kategorie'}${conf != null ? ` · ${conf} %` : ''}</span></p></div></div>`;
+}
+
+function kiView(query, token) {
+  const meta = loadKiMeta(query);
+  const links = onlineSearchLinks(query).filter((l) => SHOP_ORDER.includes(l.label));
+  const shops = links.map((l, i) => {
+    const [color, ini] = SHOPS[l.label];
+    return `<a class="shop stagger surface" style="--i:${i}; --sc:${color}" href="${esc(safeUrl(l.url))}" target="_blank" rel="noopener">
+      <span class="shop-dot" aria-hidden="true">${esc(ini)}</span><span class="shop-n">${esc(l.label)}<small>${esc(query)}</small></span>${icon('i-ext', 'shop-go')}</a>`;
+  }).join('');
+  const bodyHtml = `<section class="block first"><h2 class="label">Preise bei Händlern</h2><div class="shops">${shops}</div>
+    <p class="hint-s">Echtzeitpreise der Händler werden auf deren Seiten angezeigt.</p></section>
+    <section class="block stagger" style="--i:8"><h2 class="label">Passende Produkte in der Datenbank</h2>
+    <div id="ki-db" class="ki-db"><div class="skeleton"><div class="sk sk-row"></div><div class="sk sk-row"></div></div></div></section>
+    <div class="foot"><p>Der Treffer stammt aus einer automatischen Bilderkennung und kann abweichen.</p></div>`;
+  showSheet(kiHead(meta, query), bodyHtml, { snap: 'full', back: false, onInsert: async (h, b) => {
+    const box = $('#ki-db', b);
+    try {
+      const list = (await searchProducts(query)).slice(0, 8);
+      if (token !== navToken || !box.isConnected) return;
+      box.innerHTML = list.length ? `<ul class="list">${list.map(productItem).join('')}</ul>`
+        : `<div class="state surface slim"><p class="state-s">Keine passenden Produkte gefunden.</p></div>`;
+    } catch (e) {
+      if (token !== navToken || !box.isConnected) return;
+      box.innerHTML = `<div class="state surface slim"><p class="state-s">${esc(errText(e))}</p></div>`;
+    }
+  } });
+}
+
+// ----- Einstellungen -----
+function settingsView() {
+  const ep = getAiEndpoint();
+  const bodyHtml = `<div class="set">
+    <div id="set-status" class="status-chip ${ep ? 'on' : ''}"><i></i><span>${ep ? 'KI-Erkennung aktiv' : 'Gratis-Modus'}</span></div>
+    <p class="set-p">Ohne KI-Server erkennt ScanDeals nur allgemeine Kategorien direkt auf dem Handy. Mit einem eigenen Cloudflare Worker erkennt Claude das genaue Produktmodell – deine Daten laufen dann nur über deinen Server.</p>
+    <form id="set-form" autocomplete="off" novalidate>
+      <label class="field-l" for="ai-url">KI-Server-URL (Cloudflare Worker)</label>
+      <input id="ai-url" class="field" type="url" inputmode="url" placeholder="https://scandeals-ai.name.workers.dev" autocapitalize="off" autocorrect="off" spellcheck="false" value="${esc(ep)}">
+      <div id="set-result" class="set-result" role="status" aria-live="polite"></div>
+      <div class="set-actions">
+        <button id="set-test" class="btn glass-btn" type="button">${icon('i-refresh')}Verbindung testen</button>
+        <button id="set-save" class="btn primary" type="submit">${icon('i-check')}Speichern</button>
+      </div>
+      <button id="set-remove" class="chip" type="button" ${ep ? '' : 'hidden'}>${icon('i-close')}Entfernen</button>
+    </form>
+    <a class="link" href="${esc(WORKER_DOCS)}" target="_blank" rel="noopener">Anleitung: KI-Server einrichten ${icon('i-ext')}</a>
+  </div>`;
+  showSheet(simpleHead('Einstellungen', 'KI-Erkennung'), bodyHtml, { snap: 'full', onInsert: (h, b) => wireSettings(b) });
+}
+
+function wireSettings(b) {
+  const input = $('#ai-url', b), res = $('#set-result', b), chip = $('#set-status', b);
+  const show = (kind, msg) => { res.className = 'set-result ' + kind; res.textContent = msg; };
+  const refreshChip = () => {
+    const on = !!getAiEndpoint();
+    chip.classList.toggle('on', on);
+    $('span', chip).textContent = on ? 'KI-Erkennung aktiv' : 'Gratis-Modus';
+    $('#set-remove', b).hidden = !on;
+    updateAiState();
+  };
+  const read = () => normalizeEndpoint(input.value);
+  $('#set-test', b).onclick = async () => {
+    const url = read();
+    if (!isValidEndpoint(url)) { show('err', 'Bitte eine gültige https://-Adresse eintragen.'); return; }
+    show('busy', 'Verbindung wird getestet …');
+    haptic(8);
+    try {
+      const d = await fetchJson(`${url}/health`, 8000);
+      if (d && d.ok) show('ok', `Verbindung ok${d.model ? ' · Modell ' + String(d.model).slice(0, 60) : ''}${d.configured === false ? ' · Schlüssel fehlt noch' : ''}`);
+      else show('err', 'Der Server antwortet, ist aber kein ScanDeals-KI-Server.');
+    } catch (e) {
+      show('err', e && e.timeout ? 'Keine Antwort (Zeitüberschreitung).' : 'Server nicht erreichbar. Prüfe die Adresse und CORS-Einstellungen.');
+    }
+  };
+  $('#set-form', b).onsubmit = (e) => {
+    e.preventDefault();
+    const url = read();
+    if (!url) { setAiEndpoint(''); input.value = ''; show('ok', 'Gratis-Modus aktiv.'); refreshChip(); return; }
+    if (!isValidEndpoint(url)) { show('err', 'Bitte eine gültige https://-Adresse eintragen.'); return; }
+    setAiEndpoint(url); input.value = url; haptic([12, 40, 18]);
+    show('ok', 'Gespeichert – KI-Erkennung ist aktiv.'); refreshChip();
+  };
+  $('#set-remove', b).onclick = () => { setAiEndpoint(''); input.value = ''; show('ok', 'Entfernt – Gratis-Modus aktiv.'); refreshChip(); haptic(8); };
+}
+
+function updateAiState() { document.documentElement.classList.toggle('ai-on', !!getAiEndpoint()); }
+
 // ---------- Zuletzt gescannt ----------
 function renderRecent() {
   const h = loadHistory();
@@ -310,14 +430,18 @@ function route() {
   navToken++;
   const token = navToken;
   const hash = location.hash || '#/';
-  const m = hash.match(/^#\/(suche|produkt)\/(.+)$/);
-  const kind = m ? m[1] : hash === '#/verlauf' ? 'verlauf' : 'home';
+  const m = hash.match(/^#\/(suche|produkt|ki)\/(.+)$/);
+  const kind = m ? m[1] : hash === '#/verlauf' ? 'verlauf' : hash === '#/einstellungen' ? 'einstellungen' : 'home';
   if (kind !== 'home') {
-    if (['starting', 'scanning', 'hit'].includes(vf.dataset.state)) { stopScanner(); setVf('paused'); }
+    if (['starting', 'scanning', 'hit'].includes(vf.dataset.state)) { endLive(); setVf('paused'); }
     if (m) {
-      const arg = decodeURIComponent(m[2]);
-      (m[1] === 'suche' ? searchView(arg, token) : productView(arg, token));
-    } else historyView();
+      let arg = m[2];
+      try { arg = decodeURIComponent(m[2]); } catch { /* roh lassen */ }
+      if (m[1] === 'suche') searchView(arg, token);
+      else if (m[1] === 'ki') kiView(arg, token);
+      else productView(arg, token);
+    } else if (kind === 'einstellungen') settingsView();
+    else historyView();
   } else {
     closeSheet();
     $('#q').value = '';
@@ -343,6 +467,7 @@ initSheet({
 $('#search-form').addEventListener('submit', (e) => { e.preventDefault(); submitQuery($('#q').value); $('#q').blur(); });
 $('#q').addEventListener('input', () => { $('#go').classList.toggle('show', !!$('#q').value.trim()); });
 $('#history-btn').addEventListener('click', () => { location.hash = '#/verlauf'; });
+$('#settings-btn').addEventListener('click', () => { location.hash = '#/einstellungen'; });
 window.addEventListener('hashchange', route);
 
 // ---------- Scanner-UI ----------
@@ -350,49 +475,92 @@ const vf = $('#vf');
 const video = $('#video');
 let scanId = 0;
 let torchOn = false;
+let hintTimer = 0;
+
+const HINTS = { auto: 'Barcode oder Produkt in den Rahmen halten', barcode: 'Barcode in den Rahmen halten', objekt: 'Halte ein Produkt vor die Kamera' };
+
+/** Hinweis-Pille oben im Viewfinder; kind: '' | 'obj' | 'bar' | 'warn'. Fällt nach ms auf den Standard-Hinweis zurück. */
+function setHint(text, kind = '', ms = 0) {
+  const h = $('#vf-hint'), t = $('#vf-hint-t');
+  clearTimeout(hintTimer);
+  if (t.textContent !== text || h.dataset.kind !== kind) {
+    t.textContent = text; h.dataset.kind = kind;
+    h.classList.remove('bump'); void h.offsetWidth; if (!isReduced()) h.classList.add('bump');
+  }
+  if (ms) hintTimer = setTimeout(() => setHint(defaultHint()), ms);
+}
+const defaultHint = () => (vf.dataset.state === 'starting' ? 'Kamera wird gestartet …' : HINTS[getMode()]);
 
 function setVf(state, extra) {
   vf.dataset.state = state;
   if (state === 'paused') $('#start-label').textContent = 'Erneut scannen';
   else if (state === 'idle') $('#start-label').textContent = 'Scannen starten';
-  $('#idle-title').textContent = state === 'paused' ? 'Nächster Scan' : 'Barcode scannen';
-  $('#vf-hint').textContent = state === 'starting' ? 'Kamera wird gestartet …' : 'Barcode in den Rahmen halten';
+  $('#idle-title').textContent = state === 'paused' ? 'Nächster Scan' : 'Produkt scannen';
+  setHint(defaultHint());
   if (state === 'error') $('#vf-error-text').textContent = extra || 'Scan fehlgeschlagen.';
   if (state !== 'scanning') { torchOn = false; $('#torch-btn').hidden = true; $('#torch-btn').setAttribute('aria-pressed', 'false'); }
 }
 
 const codeLabel = (c) => (/^\d{13}$/.test(c) ? 'EAN' : /^\d{8}$/.test(c) ? 'EAN-8' : /^\d{12}$/.test(c) ? 'UPC' : 'Code') + ' ' + c;
 
+/** Kamera, Barcode-Schleife und KI-Sitzung beenden. */
+function endLive() {
+  scanId++;
+  kiKill();
+  stopScanner();
+}
+const kiKill = () => { kiStop(); };
+
+/** Schaltet Barcode-Schleife/KI gemäß Modus ein oder aus (Kamera bleibt offen und wird geteilt). */
+function applyMode() {
+  const m = getMode();
+  vf.dataset.mode = m;
+  $('#mode-seg').dataset.mode = m;
+  $('#mode-seg').querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.mode === m)));
+  if (vf.dataset.state !== 'scanning') return;
+  const id = scanId;
+  if (m !== 'objekt') {
+    startBarcodeLoop(video, (code) => onBarcode(code, id), (msg) => {
+      if (id !== scanId) return;
+      if (getMode() === 'barcode') setVf('error', msg); else setHint(msg, 'warn', 4000);
+    });
+  } else stopBarcodeLoop();
+  if (m !== 'barcode') kiStart(); else kiKill();
+  setHint(defaultHint());
+}
+
+async function onBarcode(code, id) {
+  if (id !== scanId) return;
+  kiKill();
+  $('#vf-chip').textContent = codeLabel(code);
+  vf.dataset.state = 'hit';
+  setHint('Barcode erkannt', 'bar');
+  $('#torch-btn').hidden = true;
+  haptic([12, 40, 18]);
+  video.pause();
+  await sleep(isReduced() ? 250 : 800);
+  if (id !== scanId) return;
+  stopScanner();
+  location.hash = `#/produkt/${encodeURIComponent(code)}`;
+}
+
 async function startScan() {
   const id = ++scanId;
   setVf('starting');
   haptic(8);
   try {
-    const code = await startScanner(video, {
-      onReady: () => {
-        if (id !== scanId) return;
-        setVf('scanning');
-        $('#torch-btn').hidden = !hasTorch();
-      },
-    });
+    await openCamera(video);
     if (id !== scanId) return;
-    $('#vf-chip').textContent = codeLabel(code);
-    vf.dataset.state = 'hit';
-    $('#torch-btn').hidden = true;
-    haptic([12, 40, 18]);
-    video.pause();
-    await sleep(isReduced() ? 250 : 800);
-    if (id !== scanId) return;
-    stopScanner();
-    location.hash = `#/produkt/${encodeURIComponent(code)}`;
+    setVf('scanning');
+    $('#torch-btn').hidden = !hasTorch();
+    applyMode();
   } catch (e) {
     if (e && e.name === 'AbortError') return;
     if (id === scanId) setVf('error', e.message);
   }
 }
 function stopScan() {
-  scanId++;
-  stopScanner();
+  endLive();
   setVf('paused');
 }
 $('#start-btn').addEventListener('click', startScan);
@@ -402,9 +570,31 @@ $('#torch-btn').addEventListener('click', async () => {
   const ok = await setTorch(!torchOn);
   if (ok) { torchOn = !torchOn; $('#torch-btn').setAttribute('aria-pressed', String(torchOn)); haptic(8); }
 });
+$('#mode-seg').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-mode]');
+  if (!btn || !MODES.includes(btn.dataset.mode) || btn.dataset.mode === getMode()) return;
+  setMode(btn.dataset.mode);
+  haptic(8);
+  applyMode();
+});
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && ['starting', 'scanning'].includes(vf.dataset.state)) stopScan();
 });
+
+// KI-Sitzung: Bestätigung → Route #/ki/… (oder direkt Preisansicht bei Barcode)
+initKi({
+  video,
+  shouldRun: () => vf.dataset.state === 'scanning' && !isOpen() && !document.hidden,
+  setHint,
+  onConfirm: (p) => {
+    stopScan();
+    if (p.barcode) { location.hash = `#/produkt/${encodeURIComponent(p.barcode)}`; return; }
+    saveKiMeta(p);
+    location.hash = `#/ki/${encodeURIComponent(p.query)}`;
+  },
+});
+applyMode();
+updateAiState();
 
 // Tap-Haptik für Buttons
 document.addEventListener('pointerdown', (e) => {

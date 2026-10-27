@@ -57,6 +57,9 @@
     <symbol id="i-camera" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8a2 2 0 0 1 2-2h1.6l1.2-1.8h6.4L16.4 6H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="12.5" r="3.6"/></g></symbol>
     <symbol id="i-bag" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h14l-1 12H6z"/><path d="M9 8V6.5a3 3 0 0 1 6 0V8"/></g></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></g></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 14.6a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1.03z"/></g></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 2Q13 11 22 12Q13 13 12 22Q11 13 2 12Q11 11 12 2Z" fill="currentColor"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-alert" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2.5 20h19z"/><path d="M12 10v4.5M12 17.4v.1"/></g></symbol>
   </svg>
 
@@ -68,7 +71,10 @@
         <span id="hdr-tile" class="logo-tile" aria-hidden="true"><svg><use href="#logo"/></svg></span>
         <span class="brand-name">ScanDeals</span>
       </a>
-      <button id="history-btn" class="icon-btn" type="button" aria-label="Verlauf anzeigen"><svg aria-hidden="true"><use href="#i-clock"/></svg></button>
+      <div class="hdr-actions">
+        <button id="history-btn" class="icon-btn" type="button" aria-label="Verlauf anzeigen"><svg aria-hidden="true"><use href="#i-clock"/></svg></button>
+        <button id="settings-btn" class="icon-btn" type="button" aria-label="Einstellungen"><svg aria-hidden="true"><use href="#i-gear"/></svg><i id="ai-dot" class="ai-dot" aria-hidden="true"></i></button>
+      </div>
     </header>
 
     <div id="offline" class="offline" role="status" hidden>Du bist offline – evtl. werden nur gespeicherte Daten angezeigt.</div>
@@ -83,12 +89,13 @@
       <section id="vf" class="viewfinder" data-state="idle" aria-label="Barcode-Scanner">
         <video id="video" muted playsinline autoplay></video>
         <div class="vf-shade" aria-hidden="true"></div>
+        <canvas id="overlay" class="overlay" aria-hidden="true"></canvas>
         <div class="vf-ring" aria-hidden="true"></div>
 
         <div class="vf-idle">
           <div class="idle-logo logo-tile big" aria-hidden="true"><svg><use href="#logo"/></svg></div>
-          <h2 id="idle-title">Barcode scannen</h2>
-          <p id="idle-text">Halte die Kamera auf einen Strichcode und vergleiche sofort die Preise.</p>
+          <h2 id="idle-title">Produkt scannen</h2>
+          <p id="idle-text">Halte die Kamera auf einen Barcode oder ein Produkt und vergleiche sofort die Preise.</p>
           <button id="start-btn" class="btn primary" type="button"><svg aria-hidden="true"><use href="#i-camera"/></svg><span id="start-label">Scannen starten</span></button>
         </div>
 
@@ -101,18 +108,44 @@
           <div class="flash"></div>
         </div>
 
-        <p id="vf-hint" class="vf-hint">Barcode in den Rahmen halten</p>
+        <div class="vf-top">
+          <button id="torch-btn" class="round-btn glass" type="button" aria-label="Taschenlampe" aria-pressed="false" hidden><svg aria-hidden="true"><use href="#i-torch"/></svg></button>
+          <div id="mode-seg" class="mode-seg" role="group" aria-label="Erkennungsmodus" data-mode="auto">
+            <span class="seg-thumb" aria-hidden="true"></span>
+            <button type="button" data-mode="auto" aria-pressed="true">Auto</button>
+            <button type="button" data-mode="barcode" aria-pressed="false">Barcode</button>
+            <button type="button" data-mode="objekt" aria-pressed="false">Objekt</button>
+          </div>
+          <button id="stop-btn" class="round-btn glass" type="button" aria-label="Scanner stoppen"><svg aria-hidden="true"><use href="#i-stop"/></svg></button>
+        </div>
+
+        <p id="vf-hint" class="vf-hint" role="status"><i class="dot" aria-hidden="true"></i><span id="vf-hint-t">Barcode oder Produkt in den Rahmen halten</span></p>
+        <div id="vf-load" class="vf-load" data-show="0" role="status"><span class="spin-dot" aria-hidden="true"></span>KI-Modell wird geladen …</div>
         <div id="vf-chip" class="code-chip" role="status"></div>
+
+        <div id="ai-badge" class="ai-badge glass" data-show="0" data-state="" aria-hidden="true" inert>
+          <div class="ab-top">
+            <div class="ab-ring" aria-hidden="true">
+              <svg viewBox="0 0 52 52"><circle class="r-bg" cx="26" cy="26" r="22"/><circle id="ab-ring-fg" class="r-fg" cx="26" cy="26" r="22"/></svg>
+              <span id="ab-pct">0 %</span>
+            </div>
+            <div class="ab-t">
+              <span id="ab-kicker" class="ab-k">Erkannt</span>
+              <strong id="ab-name" class="ab-name"></strong>
+              <span class="ab-subrow"><span id="ab-sub" class="ab-sub"></span> <a id="ab-setup" class="ab-setup" href="#/einstellungen" hidden>KI-Server einrichten</a></span>
+            </div>
+            <button id="ab-x" class="icon-btn small ab-x" type="button" aria-label="Vorschlag verwerfen"><svg aria-hidden="true"><use href="#i-close"/></svg></button>
+          </div>
+          <div class="ab-actions">
+            <button id="ab-go" class="btn primary" type="button"><svg aria-hidden="true"><use href="#i-check"/></svg><span id="ab-go-label">Preise vergleichen</span></button>
+            <button id="ab-re" class="btn glass-btn ab-re" type="button" aria-label="Erneut analysieren"><svg aria-hidden="true"><use href="#i-refresh"/></svg><span>Erneut</span></button>
+          </div>
+        </div>
 
         <div class="vf-error" role="alert">
           <svg aria-hidden="true"><use href="#i-alert"/></svg>
           <p id="vf-error-text"></p>
           <button id="retry-scan" class="btn glass-btn" type="button"><svg aria-hidden="true"><use href="#i-refresh"/></svg>Erneut versuchen</button>
-        </div>
-
-        <div class="vf-controls">
-          <button id="torch-btn" class="round-btn glass" type="button" aria-label="Taschenlampe" aria-pressed="false" hidden><svg aria-hidden="true"><use href="#i-torch"/></svg></button>
-          <button id="stop-btn" class="round-btn glass" type="button" aria-label="Scanner stoppen"><svg aria-hidden="true"><use href="#i-stop"/></svg></button>
         </div>
       </section>
 
