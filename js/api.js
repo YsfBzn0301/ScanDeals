@@ -14,9 +14,13 @@ export const PRICES_URL = 'https://prices.openfoodfacts.org/api/v1/prices';
 export const TIMEOUT_MS = 12000;
 const MAX_AGE_MONTHS = 12;
 
-export async function fetchJson(url, timeout = TIMEOUT_MS) {
+export async function fetchJson(url, timeout = TIMEOUT_MS, signal) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeout);
+  if (signal) {
+    if (signal.aborted) ctrl.abort();
+    else signal.addEventListener('abort', () => ctrl.abort(), { once: true });
+  }
   try {
     const res = await fetch(url, { signal: ctrl.signal, headers: { Accept: 'application/json' } });
     if (!res.ok) {
@@ -27,8 +31,9 @@ export async function fetchJson(url, timeout = TIMEOUT_MS) {
     return await res.json();
   } catch (e) {
     if (e && e.name === 'AbortError') {
-      const err = new Error('Zeitüberschreitung');
-      err.timeout = true;
+      const err = new Error(signal && signal.aborted ? 'Abgebrochen' : 'Zeitüberschreitung');
+      err.timeout = !(signal && signal.aborted);
+      err.aborted = !!(signal && signal.aborted);
       throw err;
     }
     throw e;
@@ -330,12 +335,64 @@ export async function searchProducts(q) {
   return ((data && data.products) || []).map(normalizeProduct).filter(Boolean);
 }
 
-export async function getPrices(code) {
-  const data = await fetchJson(`${PRICES_URL}?product_code=${encodeURIComponent(code)}&order_by=-date&size=100`);
-  return (data && data.items) || [];
+/**
+ * Preise zu einem Barcode (Open Prices API v1). Duplikate werden serverseitig
+ * (duplicate_of__isnull=true) und zur Sicherheit clientseitig ausgeblendet.
+ * Mit {lat, lon, radiusKm} nur Preise an OSM-Orten im Umkreis (greift nur, wenn alle drei gesetzt sind).
+ */
+export async function getPrices(code, { lat, lon, radiusKm, signal } = {}) {
+  let url = `${PRICES_URL}?product_code=${encodeURIComponent(code)}&duplicate_of__isnull=true&order_by=-date&size=100`;
+  if (isFinite(lat) && isFinite(lon) && isFinite(radiusKm) && lat !== null && lon !== null && radiusKm !== null) {
+    url += `&lat=${roundCoord(lat)}&lon=${roundCoord(lon)}&radius_km=${encodeURIComponent(radiusKm)}`;
+  }
+  const data = await fetchJson(url, TIMEOUT_MS, signal);
+  return dropDuplicates((data && data.items) || []);
 }
 
 // ---------- reine Funktionen ----------
+
+export const roundCoord = (v) => Math.round(Number(v) * 1000) / 1000;
+
+/** Verwirft als Duplikat markierte Preise (duplicate_of gesetzt). */
+export function dropDuplicates(items) {
+  return (Array.isArray(items) ? items : []).filter((it) => it && it.duplicate_of == null);
+}
+
+/** Führt Preislisten zusammen; gleiche Preis-`id` nur einmal (erste Fundstelle gewinnt), Duplikate verworfen. */
+export function mergePrices(...lists) {
+  const seen = new Set();
+  const out = [];
+  for (const it of dropDuplicates([].concat(...lists.map((l) => l || [])))) {
+    if (it.id != null) {
+      if (seen.has(it.id)) continue;
+      seen.add(it.id);
+    }
+    out.push(it);
+  }
+  return out;
+}
+
+/** Luftlinie in km (Haversine); NaN bei ungültigen Koordinaten. */
+export function haversineKm(lat1, lon1, lat2, lon2) {
+  if ([lat1, lon1, lat2, lon2].some((v) => v == null || v === '' || !isFinite(Number(v)))) return NaN;
+  const rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad, dLon = (lon2 - lon1) * rad;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6371.0088 * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
+/** „850 m“ unter 1 km, sonst „1,2 km“ (ab 10 km ohne Nachkommastelle). */
+export function formatDistance(km) {
+  if (!isFinite(km) || km < 0) return '';
+  if (km < 1) return `${Math.max(10, Math.round((km * 1000) / 10) * 10)} m`.replace(/^1000 m$/, '1,0 km');
+  if (km < 10) return `${(Math.round(km * 10) / 10).toFixed(1).replace('.', ',')} km`;
+  return `${Math.round(km)} km`;
+}
+
+/** Nur https-URLs (Logos); sonst leer. */
+export function safeHttps(u) {
+  return /^https:\/\/[^\s"'<>]+$/i.test(u || '') ? u : '';
+}
 
 function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
@@ -356,9 +413,18 @@ function monthsAgo(now, n) {
  * Gruppiert pro Händler (neuester Preis), blendet ggf. Einträge > 12 Monate aus,
  * sortiert günstig → teuer. Rückgabe: {rows, hiddenOld}
  */
-export function aggregatePrices(items, { includeOld = false, now = new Date() } = {}) {
+export function aggregatePrices(items, { includeOld = false, now = new Date(), userPos = null, maxKm = null } = {}) {
   const groups = new Map();
+  const hasPos = !!userPos && isFinite(userPos.lat) && isFinite(userPos.lon);
   for (const it of items || []) {
+    if (it && it.duplicate_of != null) continue;
+    if (maxKm != null) {
+      // „In der Nähe“: nur OSM-Orte mit Koordinaten innerhalb des Radius
+      const l = it && it.location;
+      if (!hasPos || !l || l.type === 'ONLINE') continue;
+      const d = haversineKm(userPos.lat, userPos.lon, l.osm_lat, l.osm_lon);
+      if (!isFinite(d) || d > maxKm) continue;
+    }
     const price = Number(it && it.price);
     if (!it || !isFinite(price) || it.price === null || it.price === '') continue;
     const key = retailerName(it).toLowerCase();
@@ -381,6 +447,8 @@ export function aggregatePrices(items, { includeOld = false, now = new Date() } 
       type: l.type === 'ONLINE' ? 'ONLINE' : 'OSM',
       city: [l.osm_address_postcode, l.osm_address_city].filter(Boolean).join(' '),
       lat: l.osm_lat, lon: l.osm_lon,
+      logo: safeHttps(l.osm_brand_logo_url),
+      distanceKm: hasPos && l.type !== 'ONLINE' ? haversineKm(userPos.lat, userPos.lon, l.osm_lat, l.osm_lon) : NaN,
       url: l.website_url || '',
       isOld: ts < limit,
     };
