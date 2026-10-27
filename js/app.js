@@ -160,7 +160,8 @@ function listHtml(rows, bestName) {
 
 function onlineSection(p) {
   const wanted = ['idealo', 'Google Shopping', 'Amazon.de', 'geizhals.de'];
-  const links = onlineSearchLinks(p.name + (p.brand && !p.name.includes(p.brand) ? ' ' + p.brand : ''), p.code).filter((l) => wanted.includes(l.label));
+  const all = onlineSearchLinks(p.name + (p.brand && !p.name.includes(p.brand) ? ' ' + p.brand : ''), p.code);
+  const links = wanted.map((w) => all.find((l) => l.label === w)).filter(Boolean);
   return `<section class="block stagger" style="--i:6"><h2 class="label">Online weitersuchen</h2><div class="chips">${links.map((l) =>
     `<a class="chip" href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}${icon('i-ext')}</a>`).join('')}</div></section>`;
 }

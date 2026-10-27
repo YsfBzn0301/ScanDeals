@@ -3,9 +3,10 @@
 //   App-Shell (index.html, styles.css, js/*, manifest, Icons): cache-first mit Hintergrund-Update
 //   Navigationen (offline): gecachte index.html
 //   Open Food Facts / Open Prices (*.openfoodfacts.org): network-first, Fallback Cache
-//   alles andere (z. B. CDN-Module): stale-while-revalidate
+//   alles andere (z. B. CDN-Module, TF-Modellgewichte): stale-while-revalidate
+//   *.workers.dev (KI-Server) und alle Nicht-GET-Requests: nie gecacht, direkt ans Netz
 
-const CACHE = 'scandeals-v2';
+const CACHE = 'scandeals-v3';
 
 const SHELL = [
   './',
@@ -17,6 +18,10 @@ const SHELL = [
   './js/motion.js',
   './js/sheet.js',
   './js/splash.js',
+  './js/config.js',
+  './js/vision.js',
+  './js/overlay.js',
+  './js/ki.js',
   './manifest.webmanifest',
   './icons/logo.svg',
   './icons/icon.svg',
@@ -27,6 +32,7 @@ const SHELL = [
 
 const SHELL_URLS = new Set(SHELL.map((p) => new URL(p, self.location.href).href));
 const API_HOST = /(^|\.)openfoodfacts\.org$/;
+const WORKER_HOST = 'workers.dev';
 
 function stripSearch(url) {
   const u = new URL(url);
@@ -122,9 +128,13 @@ async function staleWhileRevalidate(event) {
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
+  // Nur GET wird behandelt; POST & Co. gehen unverändert ans Netz
   if (req.method !== 'GET') return;
 
   const url = new URL(req.url);
+
+  // KI-Server (Cloudflare Workers): nie cachen, direkt durchreichen
+  if (url.hostname.includes(WORKER_HOST)) return;
 
   // App-Shell und Navigationen auf eigener Origin
   if (url.origin === self.location.origin &&

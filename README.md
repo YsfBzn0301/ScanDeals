@@ -8,6 +8,7 @@ ScanDeals ist eine installierbare Web-App (PWA), mit der du Preise für Lebensmi
 
 - **Splash-Startbildschirm:** Kurze Begrüßung beim Start, danach direkt zur Suche.
 - **Produkt per Barcode finden:** Barcode mit der Kamera scannen (EAN/UPC) oder die Ziffern direkt eingeben.
+- **KI-Produkterkennung:** Ein Produkt vor die Kamera halten, statt einen Barcode zu scannen (siehe unten).
 - **Live-Scanner im Sucher:** Die Kamera läuft direkt im Sucher; Barcodes werden erkannt, sobald sie im Bild sind. Mit der Taschenlampe-Taste lässt sich das Licht bei schlechten Lichtverhältnissen zuschalten (sofern das Gerät es unterstützt).
 - **Produkt per Name suchen:** Freitextsuche mit Ergebnisliste (Bild, Name, Marke, Menge).
 - **Preise vergleichen:** Pro Händler der neueste Preis, sortiert von günstig nach teuer, mit Bestpreis-Markierung. Angebote zeigen den durchgestrichenen Normalpreis. Meldungen älter als 12 Monate sind standardmäßig ausgeblendet.
@@ -18,12 +19,50 @@ ScanDeals ist eine installierbare Web-App (PWA), mit der du Preise für Lebensmi
 - **Dark Mode:** Dunkle Oberfläche (#0D0F12) mit Cyan-Purple-Akzenten.
 - **Offline-Nutzung:** Die App-Oberfläche wird gecacht und startet auch ohne Netz; Preisdaten brauchen eine Verbindung.
 
+## KI-Produkterkennung
+
+Im Sucher lässt sich zwischen drei Erkennungsmodi wählen:
+
+- **Auto:** Barcodes und Produkte werden gleichzeitig erkannt. Wer einen Barcode hält, bekommt sofort den Barcode-Treffer.
+- **Barcode:** Nur Barcodes werden gelesen, wie bisher.
+- **Objekt:** Die Kamera erkennt Produkte im Bild, ohne dass ein Barcode nötig ist.
+
+**Gratis-Modus (Standard):** Die Erkennung grober Kategorien (z. B. „Computermaus“, „Flasche“) läuft direkt im Handy mit TensorFlow.js. Das Modell (ca. 6 MB) wird beim ersten Mal geladen und danach im Cache der App gehalten. Danach funktioniert die Erkennung auch ohne Server.
+
+**Genaue Erkennung mit KI-Server:** Für konkrete Modelle wie „Logitech MX Master 3S“ erkennt ein eigener KI-Server mit Claude das Produkt. Die Einrichtung beschreibt [worker/README.md](./worker/README.md). Danach die Server-URL in der App unter **Einstellungen** (Zahnrad-Symbol) eintragen. Ohne URL bleibt die App im Gratis-Modus.
+
+**Datenschutz:**
+
+- Im Gratis-Modus verlassen keine Kamerabilder das Handy.
+- Mit KI-Server wird nur der Bildausschnitt des erkannten Objekts an den eigenen Server gesendet, von dort an Anthropic. Der API-Schlüssel liegt ausschließlich im Server.
+
+**Händler-Links:** Zu einem erkannten oder gesuchten Produkt verlinkt die App auf MediaMarkt, Saturn, Amazon, eBay, idealo, Google Shopping und Geizhals.
+
 ## Datenquellen
 
 - **Open Food Facts** (Produktdaten, Namen, Bilder): https://world.openfoodfacts.org
 - **Open Prices** (Preismeldungen der Community): https://prices.openfoodfacts.org
 
 Beide Datenbanken sind frei verfügbar und stehen unter der **Open Database License (ODbL)**. Die Preisdaten stammen von Nutzerinnen und Nutzern, ScanDeals ist nicht mit Open Food Facts oder Open Prices verbunden. Keine API-Schlüssel nötig.
+
+## Projektstruktur
+
+```
+index.html          Oberfläche (Seite, Sucher, Bottom-Sheet)
+styles.css          Design, Dark Mode
+manifest.webmanifest  PWA-Manifest
+sw.js               Service Worker (Offline-Cache, Cache-Name scandeals-v3)
+js/app.js           Routing, Suche, Produktansicht, Einstellungen
+js/api.js           Datenzugriff (Open Food Facts / Open Prices)
+js/scanner.js       Kamera und Barcode-Erkennung
+js/vision.js        Objekterkennung im Handy (TensorFlow.js, COCO-SSD, lazy geladen)
+js/overlay.js       Canvas-Overlay mit Bounding-Box im Sucher
+js/ki.js            Live-KI-Sitzung und Anfragen an den KI-Server
+js/config.js        KI-Server-Adresse und Scan-Modus
+js/motion.js, sheet.js, splash.js  Animationen, Bottom-Sheet, Startbildschirm
+icons/              App-Icons
+worker/             KI-Server (Cloudflare Worker), siehe worker/README.md
+```
 
 ## Lokal starten
 

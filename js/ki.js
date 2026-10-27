@@ -27,6 +27,7 @@ let ignored = new Map();    // Klasse → Zeitstempel bis wann ignoriert
 let lastDet = null;
 let pctAnim = 0;
 let instant = false;
+let lastPersonHint = -1e9;
 const RING_C = 2 * Math.PI * 22;
 
 const trunc = (s, n = 120) => String(s ?? '').trim().slice(0, n);
@@ -111,7 +112,10 @@ function handle(dets) {
       if (obj.ctrl) obj.ctrl.abort();
       obj = null; hideBadge();
     }
-    if (!obj && misses === 2 && onlyPersons(dets)) o.setHint('Halte ein Produkt vor die Kamera', 'warn', 3000);
+    if (!obj && misses >= 2 && onlyPersons(dets) && now - lastPersonHint > 3500) {
+      lastPersonHint = now;
+      o.setHint('Halte ein Produkt vor die Kamera', 'warn', 3000);
+    }
     return;
   }
   misses = 0;

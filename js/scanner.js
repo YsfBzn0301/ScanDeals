@@ -9,7 +9,6 @@ let video = null;
 let openId = 0;
 let loopOn = false;
 let loopTimer = 0;
-let zxingControls = null;
 
 function track() {
   const s = stream || (video && video.srcObject);
@@ -39,7 +38,6 @@ export async function setTorch(on) {
 export function stopBarcodeLoop() {
   loopOn = false;
   if (loopTimer) { clearTimeout(loopTimer); loopTimer = 0; }
-  if (zxingControls) { try { zxingControls.stop(); } catch { /* ignorieren */ } zxingControls = null; }
 }
 
 /** Gibt Kamera und Erkennung frei. */
@@ -112,7 +110,8 @@ export function startBarcodeLoop(videoEl, onCode, onError) {
     tick();
     return;
   }
-  // Fallback: ZXing (nutzt das bereits laufende Video)
+  // Fallback: ZXing liest einzelne Standbilder vom Video über ein Canvas.
+  // So fasst ZXing den geteilten Kamera-Stream nie an (stop() würde sonst das Video leeren).
   (async () => {
     let mod;
     try { mod = await import(ZXING_URL); }
@@ -121,15 +120,30 @@ export function startBarcodeLoop(videoEl, onCode, onError) {
       return;
     }
     if (!loopOn) return;
-    try {
-      const reader = new mod.BrowserMultiFormatReader();
-      const ctl = await reader.decodeFromVideoElement(videoEl, (result) => {
-        if (result && loopOn) { loopOn = false; onCode(result.getText()); }
-      });
-      if (!loopOn) { try { ctl.stop(); } catch { /* ignorieren */ } return; }
-      zxingControls = ctl;
-    } catch {
-      if (loopOn && onError) onError('Barcode-Erkennung konnte nicht gestartet werden.');
+    let reader;
+    try { reader = new mod.BrowserMultiFormatReader(); }
+    catch {
+      if (onError) onError('Barcode-Erkennung konnte nicht gestartet werden.');
+      return;
     }
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const tick = () => {
+      if (!loopOn) return;
+      const w = videoEl.videoWidth, h = videoEl.videoHeight;
+      if (!document.hidden && videoEl.readyState >= 2 && w && h) {
+        // Mittleren Bereich nehmen und auf max. 960 px verkleinern (schneller auf Handys)
+        const sw = Math.round(w * 0.8), sh = Math.round(h * 0.6);
+        const scale = Math.min(1, 960 / sw);
+        canvas.width = Math.round(sw * scale); canvas.height = Math.round(sh * scale);
+        ctx.drawImage(videoEl, (w - sw) / 2, (h - sh) / 2, sw, sh, 0, 0, canvas.width, canvas.height);
+        try {
+          const result = reader.decodeFromCanvas(canvas);
+          if (result && loopOn) { loopOn = false; onCode(result.getText()); return; }
+        } catch { /* kein Barcode in diesem Bild */ }
+      }
+      loopTimer = setTimeout(tick, 200);
+    };
+    tick();
   })();
 }
